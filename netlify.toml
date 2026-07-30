@@ -1,0 +1,360 @@
+/**
+ * AgencyPro — Daily KPI Report
+ * Netlify Scheduled Function — fires daily at 5:00 PM Central (23:00 UTC)
+ *
+ * Environment variables required (set in Netlify dashboard → Site Settings → Environment Variables):
+ *   FIREBASE_PROJECT_ID       → agencypro-crm
+ *   FIREBASE_CLIENT_EMAIL     → from Firebase service account JSON
+ *   FIREBASE_PRIVATE_KEY      → from Firebase service account JSON (include the full key with \n)
+ *   GMAIL_USER                → jallen1@farmersagent.com  (Gmail address to send FROM)
+ *   GMAIL_APP_PASSWORD        → 16-character Gmail App Password (not your regular password)
+ *   REPORT_TO_EMAIL           → jallen1@farmersagent.com  (address to send TO — can be same)
+ */
+
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore }                  from 'firebase-admin/firestore';
+import nodemailer                        from 'nodemailer';
+
+// ── FIREBASE INIT ────────────────────────────────────────────────────
+function getDB() {
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert({
+        projectId:   process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey:  process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    });
+  }
+  return getFirestore();
+}
+
+// ── HELPERS ──────────────────────────────────────────────────────────
+const fmtDol = n  => '$' + Number(n || 0).toLocaleString('en-US');
+const fmtDt  = iso => {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-');
+  return `${m}/${d}/${y}`;
+};
+const pad = (s, w, right = false) => {
+  const str = String(s ?? '');
+  return right ? str.padStart(w) : str.padEnd(w);
+};
+const line = (len, ch = '-') => ch.repeat(len);
+
+function getTodayCST() {
+  // CST = UTC-6, CDT = UTC-5. Use Intl to get the right date in Central time.
+  const now = new Date();
+  const central = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+  return central; // returns YYYY-MM-DD
+}
+
+function getFolioPeriod(today) {
+  const FOLIO_CLOSE_DAYS = {
+    1:20,2:18,3:18,4:17,5:19,6:18,7:17,8:19,9:18,10:19,11:17,12:17
+  };
+  const d    = new Date(today + 'T00:00:00');
+  const m    = d.getMonth() + 1;
+  const day  = d.getDate();
+  const year = d.getFullYear();
+  const closeDay = FOLIO_CLOSE_DAYS[m];
+
+  let periodStart, periodEnd, label;
+  if (day <= closeDay) {
+    // We're in the second half of last month's folio
+    const prevMonth = m === 1 ? 12 : m - 1;
+    const prevYear  = m === 1 ? year - 1 : year;
+    const prevClose = FOLIO_CLOSE_DAYS[prevMonth];
+    periodStart = new Date(prevYear, prevMonth - 1, prevClose + 1);
+    periodEnd   = new Date(year, m - 1, closeDay);
+    label = `${periodStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${periodEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  } else {
+    // We're in the first half of this month's folio
+    periodStart = new Date(year, m - 1, closeDay + 1);
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear  = m === 12 ? year + 1 : year;
+    const nextClose = FOLIO_CLOSE_DAYS[nextMonth];
+    periodEnd = new Date(nextYear, nextMonth - 1, nextClose);
+    label = `${periodStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${periodEnd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  }
+  return { periodStart, periodEnd, label };
+}
+
+function leadPolicyCount(lead) {
+  if (lead.quotes && lead.quotes.length > 0) return lead.quotes.length;
+  return 1;
+}
+
+function expandQuotes(lead) {
+  const name = `${lead.firstName || ''} ${lead.lastName || ''}`.trim();
+  if (lead.quotes && lead.quotes.length) {
+    return lead.quotes.map(q => ({
+      leadName: name, agentId: lead.agentId,
+      line: q.line || lead.line || 'Other', premium: q.premium || 0,
+    }));
+  }
+  return [{ leadName: name, agentId: lead.agentId, line: lead.line || 'Other', premium: lead.premium || 0 }];
+}
+
+// ── MAIN HANDLER ─────────────────────────────────────────────────────
+export default async function handler() {
+  console.log('[daily-kpi-report] Starting...');
+
+  const db      = getDB();
+  const today   = getTodayCST();
+  const folio   = getFolioPeriod(today);
+  const toEmail = process.env.REPORT_TO_EMAIL || 'jallen1@farmersagent.com';
+
+  // ── FETCH DATA FROM FIRESTORE ──
+  const [leadsSnap, producersSnap, settingsSnap] = await Promise.all([
+    db.collection('leads').get(),
+    db.collection('producers').get(),
+    db.collection('settings').doc('agency').get(),
+  ]);
+
+  const leads     = leadsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const producers = producersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const settings  = settingsSnap.exists ? settingsSnap.data() : {};
+  const ownerName = settings.ownerName || 'Agency Owner';
+
+  const getProdName = id => producers.find(p => p.id === id)?.name || 'Unassigned';
+
+  const folioStart = folio.periodStart;
+  const folioEnd   = folio.periodEnd;
+  folioEnd.setHours(23, 59, 59, 999);
+
+  // ── TODAY'S QUOTES ──
+  const todayQuotedLeads = leads.filter(l => l.quotedDate === today);
+  const todayQuoteRows   = todayQuotedLeads.flatMap(expandQuotes);
+
+  // ── TODAY'S CLOSED ──
+  const todayClosedLeads = leads.filter(l =>
+    l.status === 'Closed Won' &&
+    !(l.customerType === 'existing' && !l.crossSellRef) &&
+    (l.closedDate || '') === today
+  );
+  const todayPolicies = todayClosedLeads.reduce((s, l) => s + leadPolicyCount(l), 0);
+  const todayPremium  = todayClosedLeads.reduce((s, l) => s + Number(l.premium || 0), 0);
+
+  // ── FOLIO QUOTES ──
+  const folioQuotedLeads = leads.filter(l => {
+    if (l.quotedDate) {
+      const qd = new Date(l.quotedDate + 'T00:00:00');
+      return qd >= folioStart && qd <= folioEnd;
+    }
+    if (['Quoted','Closed Won','Quote Not Closed','Closed Lost'].includes(l.status)) {
+      const ld = new Date((l.date || '') + 'T00:00:00');
+      return ld >= folioStart && ld <= folioEnd;
+    }
+    return false;
+  });
+  const folioQuoteRows = folioQuotedLeads.flatMap(expandQuotes);
+
+  // ── FOLIO CLOSED ──
+  const folioClosedLeads = leads.filter(l => {
+    if (l.status !== 'Closed Won') return false;
+    if (l.customerType === 'existing' && !l.crossSellRef) return false;
+    const d = new Date((l.closedDate || l.date || '') + 'T00:00:00');
+    return d >= folioStart && d <= folioEnd;
+  });
+  const folioPolicies = folioClosedLeads.reduce((s, l) => s + leadPolicyCount(l), 0);
+  const folioPremium  = folioClosedLeads.reduce((s, l) => s + Number(l.premium || 0), 0);
+
+  // ── PRODUCER BREAKDOWN ──
+  const prodData = {};
+  const ensure = n => {
+    if (!prodData[n]) prodData[n] = { qToday:0, polToday:0, premToday:0, qFolio:0, polFolio:0, premFolio:0 };
+  };
+  todayQuoteRows.forEach(q   => { const n=getProdName(q.agentId); ensure(n); prodData[n].qToday++;                                            });
+  todayClosedLeads.forEach(l => { const n=getProdName(l.agentId); ensure(n); prodData[n].polToday+=leadPolicyCount(l); prodData[n].premToday+=Number(l.premium||0); });
+  folioQuoteRows.forEach(q   => { const n=getProdName(q.agentId); ensure(n); prodData[n].qFolio++;                                            });
+  folioClosedLeads.forEach(l => { const n=getProdName(l.agentId); ensure(n); prodData[n].polFolio+=leadPolicyCount(l); prodData[n].premFolio+=Number(l.premium||0); });
+
+  // ── BUILD PLAIN-TEXT BODY ──
+  let txt = '';
+  txt += `ALLEN INSURANCE AGENCY\n`;
+  txt += `Daily KPI Report — ${fmtDt(today)}\n`;
+  txt += `Folio Period: ${folio.label}\n`;
+  txt += `${'='.repeat(60)}\n\n`;
+
+  txt += `TODAY AT A GLANCE\n${line(60)}\n`;
+  txt += `Quotes Entered:   ${String(todayQuoteRows.length).padStart(6)}\n`;
+  txt += `Policies Sold:    ${String(todayPolicies).padStart(6)}\n`;
+  txt += `Premium Sold:     ${fmtDol(todayPremium).padStart(10)}\n\n`;
+
+  txt += `FOLIO TO DATE (${folio.label})\n${line(60)}\n`;
+  txt += `Total Quotes:     ${String(folioQuoteRows.length).padStart(6)}\n`;
+  txt += `Total Policies:   ${String(folioPolicies).padStart(6)}\n`;
+  txt += `Total Premium:    ${fmtDol(folioPremium).padStart(10)}\n\n`;
+
+  // Producer table
+  txt += `PRODUCER BREAKDOWN\n${line(60)}\n`;
+  const col = [18,7,8,10,7,8,10];
+  txt += pad('Producer',col[0])+pad('Q-Day',col[1],true)+pad('Pol-Day',col[2],true)+pad('Prem-Day',col[3],true)+pad('Q-Folio',col[4],true)+pad('P-Folio',col[5],true)+pad('$-Folio',col[6],true)+'\n';
+  txt += line(60)+'\n';
+  Object.entries(prodData).sort().forEach(([name,d]) => {
+    txt += pad(name.slice(0,17),col[0])+pad(d.qToday,col[1],true)+pad(d.polToday,col[2],true)+pad(fmtDol(d.premToday),col[3],true)+pad(d.qFolio,col[4],true)+pad(d.polFolio,col[5],true)+pad(fmtDol(d.premFolio),col[6],true)+'\n';
+  });
+  txt += line(60)+'\n';
+  txt += pad('TOTAL',col[0])+pad(todayQuoteRows.length,col[1],true)+pad(todayPolicies,col[2],true)+pad(fmtDol(todayPremium),col[3],true)+pad(folioQuoteRows.length,col[4],true)+pad(folioPolicies,col[5],true)+pad(fmtDol(folioPremium),col[6],true)+'\n\n';
+
+  // Quotes detail
+  txt += `QUOTES ENTERED TODAY (${todayQuoteRows.length})\n${line(60)}\n`;
+  if (todayQuoteRows.length) {
+    txt += pad('Customer',24)+pad('Line',16)+'Producer\n'+line(60)+'\n';
+    todayQuoteRows.forEach(q => {
+      txt += pad(q.leadName.slice(0,23),24)+pad((q.line||'—').slice(0,15),16)+getProdName(q.agentId)+'\n';
+    });
+  } else {
+    txt += 'No quotes entered today.\n';
+  }
+  txt += '\n';
+
+  // Closed detail
+  txt += `POLICIES SOLD TODAY (${todayPolicies})\n${line(60)}\n`;
+  if (todayClosedLeads.length) {
+    txt += pad('Customer',22)+pad('Line',12)+pad('Premium',10)+'Producer\n'+line(60)+'\n';
+    todayClosedLeads.forEach(l => {
+      const pols = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line,premium:l.premium}];
+      pols.forEach(q => {
+        txt += pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,21),22)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+getProdName(l.agentId)+'\n';
+      });
+    });
+  } else {
+    txt += 'No policies sold today.\n';
+  }
+  txt += `\n${'='.repeat(60)}\n`;
+  txt += `Sent automatically by AgencyPro CRM — Allen Insurance Agency\n`;
+  txt += `609 Cheek-Sparger Road, Colleyville TX 76034 | (817) 345-0155\n`;
+
+  // ── BUILD HTML BODY ──
+  const prodTableRows = Object.entries(prodData).sort().map(([name,d]) => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${name}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${d.qToday}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${d.polToday}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${fmtDol(d.premToday)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0ea5a0">${d.qFolio}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0ea5a0">${d.polFolio}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0ea5a0">${fmtDol(d.premFolio)}</td>
+    </tr>`).join('');
+
+  const quoteRows = todayQuoteRows.length
+    ? todayQuoteRows.map(q => `<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.leadName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProdName(q.agentId)}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No quotes entered today</td></tr>';
+
+  const closedRows = todayClosedLeads.length
+    ? todayClosedLeads.flatMap(l => {
+        const pols = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line,premium:l.premium}];
+        return pols.map(q => `<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProdName(l.agentId)}</td></tr>`);
+      }).join('')
+    : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No policies sold today</td></tr>';
+
+  const html = `<!DOCTYPE html><html><body style="font-family:'Helvetica Neue',Arial,sans-serif;color:#1e293b;margin:0;padding:0;background:#f1f5f9">
+<div style="max-width:680px;margin:0 auto;padding:24px 16px">
+
+  <div style="background:linear-gradient(135deg,#1B3A5C 0%,#2d5a8e 100%);border-radius:12px;padding:28px 32px;margin-bottom:20px">
+    <div style="color:#C47A2A;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px">Allen Insurance Agency — AgencyPro</div>
+    <div style="color:#ffffff;font-size:26px;font-weight:800;margin-bottom:4px">Daily KPI Report</div>
+    <div style="color:#94a3b8;font-size:13px">${fmtDt(today)} &nbsp;·&nbsp; Folio: ${folio.label}</div>
+  </div>
+
+  <div style="display:flex;gap:12px;margin-bottom:20px">
+    <div style="flex:1;background:#fff;border-radius:10px;padding:18px;border-top:4px solid #0ea5a0;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+      <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Quotes Today</div>
+      <div style="font-size:36px;font-weight:900;color:#0ea5a0;line-height:1.1;margin:6px 0 2px">${todayQuoteRows.length}</div>
+      <div style="font-size:11px;color:#94a3b8">individual lines</div>
+    </div>
+    <div style="flex:1;background:#fff;border-radius:10px;padding:18px;border-top:4px solid #22c55e;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+      <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Policies Sold</div>
+      <div style="font-size:36px;font-weight:900;color:#22c55e;line-height:1.1;margin:6px 0 2px">${todayPolicies}</div>
+      <div style="font-size:11px;color:#94a3b8">closed won today</div>
+    </div>
+    <div style="flex:1;background:#fff;border-radius:10px;padding:18px;border-top:4px solid #C47A2A;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+      <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Premium Sold</div>
+      <div style="font-size:28px;font-weight:900;color:#C47A2A;line-height:1.1;margin:6px 0 2px">${fmtDol(todayPremium)}</div>
+      <div style="font-size:11px;color:#94a3b8">new business today</div>
+    </div>
+  </div>
+
+  <div style="background:#fff;border-radius:10px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden">
+    <div style="background:#1B3A5C;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">
+      <span style="color:#fff;font-size:14px;font-weight:700">Producer Breakdown</span>
+      <span style="color:#94a3b8;font-size:11px">Today &nbsp;·&nbsp; Folio to date</span>
+    </div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:9px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Producer</th>
+        <th style="padding:9px 12px;text-align:center;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Quotes<br><span style="font-weight:400;color:#94a3b8">Today</span></th>
+        <th style="padding:9px 12px;text-align:center;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Policies<br><span style="font-weight:400;color:#94a3b8">Today</span></th>
+        <th style="padding:9px 12px;text-align:center;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Premium<br><span style="font-weight:400;color:#94a3b8">Today</span></th>
+        <th style="padding:9px 12px;text-align:center;color:#0ea5a0;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Quotes<br><span style="font-weight:400">Folio</span></th>
+        <th style="padding:9px 12px;text-align:center;color:#0ea5a0;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Policies<br><span style="font-weight:400">Folio</span></th>
+        <th style="padding:9px 12px;text-align:center;color:#0ea5a0;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Premium<br><span style="font-weight:400">Folio</span></th>
+      </tr></thead>
+      <tbody>${prodTableRows || '<tr><td colspan="7" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No producer activity today</td></tr>'}</tbody>
+      <tfoot><tr style="background:#f8fafc;font-weight:700;font-size:12px">
+        <td style="padding:10px 12px;border-top:2px solid #e2e8f0">Total</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0">${todayQuoteRows.length}</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0">${todayPolicies}</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0">${fmtDol(todayPremium)}</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0;color:#0ea5a0">${folioQuoteRows.length}</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0;color:#0ea5a0">${folioPolicies}</td>
+        <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0;color:#0ea5a0">${fmtDol(folioPremium)}</td>
+      </tr></tfoot>
+    </table></div>
+  </div>
+
+  <div style="background:#fff;border-radius:10px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden">
+    <div style="background:#1B3A5C;padding:14px 20px"><span style="color:#fff;font-size:14px;font-weight:700">Quotes Entered Today</span></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Customer</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Line</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Producer</th>
+      </tr></thead>
+      <tbody>${quoteRows}</tbody>
+    </table>
+  </div>
+
+  <div style="background:#fff;border-radius:10px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden">
+    <div style="background:#1B3A5C;padding:14px 20px"><span style="color:#fff;font-size:14px;font-weight:700">Policies Sold Today</span></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Customer</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Line</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Premium</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:600;font-size:11px;border-bottom:1px solid #e2e8f0">Producer</th>
+      </tr></thead>
+      <tbody>${closedRows}</tbody>
+    </table>
+  </div>
+
+  <div style="text-align:center;color:#94a3b8;font-size:11px;padding:8px 0 16px">
+    Sent automatically at 5:00 PM Central &nbsp;·&nbsp; AgencyPro CRM &nbsp;·&nbsp; Allen Insurance Agency &nbsp;·&nbsp; Colleyville, TX
+  </div>
+</div></body></html>`;
+
+  // ── SEND EMAIL VIA GMAIL SMTP ──
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASSWORD,
+    },
+  });
+
+  await transporter.sendMail({
+    from:    `"AgencyPro CRM" <${process.env.GMAIL_USER}>`,
+    to:      toEmail,
+    subject: `AgencyPro Daily KPI Report — ${fmtDt(today)}`,
+    text:    txt,
+    html:    html,
+  });
+
+  console.log(`[daily-kpi-report] Report sent to ${toEmail} for ${today}`);
+  return new Response('OK', { status: 200 });
+}
