@@ -3048,6 +3048,65 @@ const WORKFLOW_LIBRARY = [
         ] },
     ],
   },
+  {
+    id: 'building-permit',
+    name: 'Building Permit — Follow-Up Playbook',
+    description: '45-day follow-up cadence for homeowners with recent building permits. Copy and paste the emails and texts into your CRM. Stop the sequence when the prospect engages.',
+    bestPractices: [
+      'Congratulate first.',
+      "Focus on protecting the homeowner's investment, not selling insurance.",
+      'Record the project type, completion date, current carrier, and renewal month.',
+      'Move engaged prospects into the CRM and schedule follow-up after completion or 60 days before renewal.',
+    ],
+    steps: [
+      { day: 'Day 1', title: 'Initial Contact', objective: 'Congratulate the homeowner and offer a complimentary review.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO\nHi, this is [Agent] with Allen Insurance Agency.\n\nWHY\nI noticed a recent building permit for your home. Congratulations on the project! Many homeowners don't realize renovations can affect insurance coverage and discounts.\n\nWHAT\nWould you be open to a quick 10-minute insurance review after the project is complete to make sure your investment is properly protected?\n\nAsk: What project are you completing? Is it finished? Have you notified your insurance company?` },
+          { type: 'text', label: 'Text Message', content: `Hi [Name], this is [Agent] with Allen Insurance Agency. Congratulations on your recent home improvement project! Projects like yours can affect insurance coverage and discounts. If you'd ever like a complimentary review, just reply here.` },
+          { type: 'email', label: 'Email', subject: 'Congratulations on Your Home Improvement Project', content: `Hi [Name],\n\nCongratulations on your recent project! Many homeowners are surprised to learn that a new roof, remodel, addition, or pool can change their insurance needs. I'd be happy to provide a complimentary review to make sure your investment is protected.\n\n[Agent]` },
+        ] },
+      { day: 'Day 3', title: 'Follow-Up Call', objective: 'Learn about the project timeline.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent].\n\nWHY: I'm following up on your recent home improvement project.\n\nWHAT: Has the work been completed yet? Once it's done, I'd be happy to review your policy to make sure everything is updated correctly.` },
+        ] },
+      { day: 'Day 5', title: 'Educational Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'Have You Updated Your Insurance?', content: `Hi [Name],\n\nAfter a home improvement project, it's important to make sure your homeowners policy reflects those changes. We'll verify your dwelling coverage, new features, and any available discounts. Reply anytime if you'd like a complimentary review.\n\n[Agent]` },
+        ] },
+      { day: 'Day 7', title: 'Check-In Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Quick question...has your project been completed yet? Once it's finished, I'd be happy to review your insurance and make sure your recent investment is fully protected.` },
+        ] },
+      { day: 'Day 10', title: 'Discovery Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent].\n\nWHY: Many homeowners assume their policy updates automatically after renovations.\n\nWHAT: I'd love to review your coverage so you know exactly how your improvements affect your protection.` },
+        ] },
+      { day: 'Day 14', title: 'Value Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'A Renovation Is the Perfect Time for an Insurance Checkup', content: `Hi [Name],\n\nA recent renovation is one of the best reasons to review your insurance. We'll verify replacement cost, dwelling limits, new structures, and possible discounts. It only takes a few minutes.\n\n[Agent]` },
+        ] },
+      { day: 'Day 18', title: 'Social Proof Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `We've recently helped several local homeowners update their insurance after completing home improvement projects. If you'd like a second opinion on your coverage, I'd be happy to help.` },
+        ] },
+      { day: 'Day 21', title: 'Permission Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent].\n\nWHY: I wanted to make one final attempt to connect.\n\nWHAT: If now isn't the right time, would it be okay if I reached back out after your project is complete or before your next renewal?` },
+        ] },
+      { day: 'Day 28', title: 'Home Value Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: "Has Your Home's Value Changed?", content: `Hi [Name],\n\nMajor home improvements often increase the cost to rebuild your home after a loss. That's why it's a good idea to review your dwelling limit after completing a project. Reply if you'd like us to review your policy.\n\n[Agent]` },
+        ] },
+      { day: 'Day 35', title: 'Final Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Hope your project is going well! Whenever it's complete, I'd be happy to review your insurance and make sure everything has been updated correctly. Just let me know.` },
+        ] },
+      { day: 'Day 45', title: 'Final Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent].\n\nWHY: I wanted to close the loop on my previous messages.\n\nWHAT: I'll close my file for now, but if you'd ever like a complimentary insurance review after your project is complete, we'd love to help. Have a great day!` },
+        ] },
+    ],
+  },
 ];
 const WORKFLOW_TYPE_ICONS = { call: '📞', text: '💬', email: '📧' };
 
