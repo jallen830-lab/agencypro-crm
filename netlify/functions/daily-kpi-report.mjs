@@ -6,7 +6,7 @@
  *   FIREBASE_PROJECT_ID   → agencypro-crm
  *   FIREBASE_WEB_API_KEY  → AIzaSyBlo5vw62iKEAdqcg3xEY7TwvdPze10VcM
  *   RESEND_API_KEY        → from resend.com (starts with re_)
- *   REPORT_FROM_EMAIL     → onboarding@resend.dev  (use this until you verify a domain)
+ *   REPORT_FROM_EMAIL     → reports@youragentonthego.com  (verified domain in Resend)
  *   REPORT_TO_EMAIL       → jallen1@farmersagent.com
  */
 
@@ -83,7 +83,7 @@ export default async function handler() {
   const projectId  = process.env.FIREBASE_PROJECT_ID;
   const apiKey     = process.env.FIREBASE_WEB_API_KEY;
   const resendKey  = process.env.RESEND_API_KEY;
-  const fromEmail  = process.env.REPORT_FROM_EMAIL || 'onboarding@resend.dev';
+  const fromEmail  = process.env.REPORT_FROM_EMAIL || 'reports@youragentonthego.com';
   const toEmail    = process.env.REPORT_TO_EMAIL   || 'jallen1@farmersagent.com';
 
   if (!projectId || !apiKey)  throw new Error('Missing Firebase env vars');
