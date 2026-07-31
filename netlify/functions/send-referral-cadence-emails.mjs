@@ -2,12 +2,14 @@
  * AgencyPro — Referral Partner 90-Day Cadence Emails
  * Netlify Scheduled Function — fires daily at 9:00 AM Central (15:00 UTC)
  *
- * Sends the Week 3/6/9/12 emails from the referral partner 90-day cadence
- * (see REFERRAL_90DAY_CADENCE in index.html — content is mirrored here),
- * from the assigned producer's own mailbox on the verified
+ * Sends the Week 3/6/9/12 emails from whichever 90-day cadence applies to
+ * the partner's type — REFERRAL_REALTOR_CADENCE (Realtor/Mortgage Lender)
+ * or REFERRAL_ROOFER_CADENCE (Roofer) in index.html, content mirrored here
+ * as REALTOR_CADENCE/ROOFER_CADENCE keyed by each task's cadenceType field.
+ * Sends from the assigned producer's own mailbox on the verified
  * youragentonthego.com domain. When the Week 12 (appreciation) email
- * sends, this also creates the next cycle's 12 tasks so the cadence
- * repeats indefinitely for as long as the partner stays active.
+ * sends, this also creates the next cycle's 12 tasks (same cadenceType)
+ * so the cadence repeats indefinitely for as long as the partner stays active.
  *
  * Environment variables required:
  *   FIREBASE_PROJECT_ID   → agencypro-crm
@@ -92,8 +94,8 @@ function addDays(isoDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// ── 90-DAY CADENCE (mirrors REFERRAL_90DAY_CADENCE in index.html) ─────
-const CADENCE = [
+// ── 90-DAY CADENCES (mirror REFERRAL_REALTOR_CADENCE / REFERRAL_ROOFER_CADENCE in index.html) ──
+const REALTOR_CADENCE = [
   { week: 1,  channel: 'text' },
   { week: 2,  channel: 'call' },
   { week: 3,  channel: 'email',
@@ -115,6 +117,31 @@ const CADENCE = [
     subject: 'Thank You for Your Partnership',
     body: (fn, pl) => `Hi ${fn},\n\nI just wanted to say thank you for your partnership. We appreciate the opportunity to work alongside you and help make your transactions smoother through responsive communication and dependable advice.\n\nIf there's ever anything we can do better to support your business, I'd love your feedback.\n\nThank you!\n\n${pl}\nAllen Insurance Agency` },
 ];
+
+const ROOFER_CADENCE = [
+  { week: 1,  channel: 'text' },
+  { week: 2,  channel: 'call' },
+  { week: 3,  channel: 'email',
+    subject: 'Helping Homeowners Before the Claim',
+    body: (fn, pl) => `Hi ${fn},\n\nOne of the best ways we can work together is by helping homeowners understand their coverage before a claim is filed. If you ever have someone with questions about deductibles, replacement cost, or the claims process, feel free to connect us.\n\nThanks for your partnership!\n\n${pl}` },
+  { week: 4,  channel: 'text' },
+  { week: 5,  channel: 'call' },
+  { week: 6,  channel: 'email',
+    subject: 'Seasonal Roof Maintenance Tips',
+    body: (fn, pl) => `Hi ${fn},\n\nWe're sharing seasonal home maintenance tips with our clients. If you have a favorite roof checklist, we'd love to feature it and recommend your company.\n\n${pl}` },
+  { week: 7,  channel: 'text' },
+  { week: 8,  channel: 'call' },
+  { week: 9,  channel: 'email',
+    subject: 'Preparing Homeowners for Storm Season',
+    body: (fn, pl) => `Hi ${fn},\n\nLet's help homeowners prepare before storms arrive. We can even co-host a homeowner education event or create a joint checklist.\n\n${pl}` },
+  { week: 10, channel: 'text' },
+  { week: 11, channel: 'call' },
+  { week: 12, channel: 'email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pl) => `Hi ${fn},\n\nThank you for trusting Allen Insurance Agency as a partner. We appreciate your professionalism and look forward to helping many more homeowners together.\n\n${pl}` },
+];
+
+const CADENCES = { realtor: REALTOR_CADENCE, roofer: ROOFER_CADENCE };
 
 function wrapHtml(bodyText) {
   const bodyHtml = bodyText.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -165,9 +192,10 @@ export default async function handler() {
       continue;
     }
 
-    const step = CADENCE.find(c => c.week === task.week);
+    const cadence = CADENCES[task.cadenceType];
+    const step = cadence && cadence.find(c => c.week === task.week);
     if (!step || step.channel !== 'email') {
-      console.log(`[send-referral-cadence-emails] SKIP task ${task.id} — week ${task.week} is not an email step`);
+      console.log(`[send-referral-cadence-emails] SKIP task ${task.id} — week ${task.week} (cadenceType=${task.cadenceType}) is not a recognized email step`);
       skipped++;
       continue;
     }
@@ -209,7 +237,7 @@ export default async function handler() {
       if (task.week === 12) {
         const nextAnchor = addDays(task.cadenceAnchor, 84); // 12 weeks x 7 days
         const nextCycle = (task.cycle || 1) + 1;
-        for (const c of CADENCE) {
+        for (const c of cadence) {
           const dueDate = addDays(nextAnchor, 5 + (c.week - 1) * 7);
           await firestoreCreateTask(projectId, apiKey, {
             text: `${c.channel === 'email' ? '📧' : c.channel === 'call' ? '📞' : '💬'} Week ${c.week} — ${firstName}${partner.company ? ' (' + partner.company + ')' : ''}`,
@@ -221,6 +249,7 @@ export default async function handler() {
             partnerName: partner.name,
             touchpointType: c.channel,
             type: 'referral-partner-cadence',
+            cadenceType: task.cadenceType,
             week: c.week,
             cycle: nextCycle,
             cadenceAnchor: nextAnchor,

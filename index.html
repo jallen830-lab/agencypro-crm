@@ -4029,7 +4029,7 @@ function renderReferralPartnerSequence(){
         ? `<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🤖 auto-sends</span>`
         : '';
       const scriptBtn = (isCadence && channel!=='email')
-        ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralCadenceScript(${t.week},'${(t.partnerName||'').replace(/'/g,"\\'")}')">📋</button>`
+        ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralCadenceScript('${t.id}')">📋</button>`
         : '';
       html += `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;padding-left:4px">
         <span style="background:${typeColor};color:#fff;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;flex-shrink:0;min-width:44px;text-align:center">${badgeLabel}</span>
@@ -4692,7 +4692,7 @@ function renderReferrals(){
       <td style="color:var(--muted);font-size:12px">${p.lastContact?fmtDate(p.lastContact):'Never'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-ghost btn-sm" onclick="openModal('referralLog',{partnerId:'${p.id}',partnerName:'${p.name.replace(/'/g,"\\'")}' })">+ Log</button>
-        <button class="btn btn-ghost btn-sm" style="color:#8b5cf6" onclick="showReferralScripts('${p.name.replace(/'/g,"\\'")}','${p.agentId||''}')">📋 Scripts</button>
+        <button class="btn btn-ghost btn-sm" style="color:#8b5cf6" onclick="showReferralScripts('${p.name.replace(/'/g,"\\'")}','${p.agentId||''}','${(p.type||'').replace(/'/g,"\\'")}')">📋 Scripts</button>
         <button class="btn btn-ghost btn-sm" onclick="openModal('referralPartner',DB.referralPartners.find(x=>x.id==='${p.id}'))">Edit</button>
         <button class="btn btn-danger btn-sm" onclick="deleteReferralPartner('${p.id}')">🗑</button>
       </td>
@@ -4711,13 +4711,29 @@ function renderReferrals(){
 }
 
 // ── REFERRAL SCRIPTS MODAL ───────────────────────────────────────────
-// Full 12-week cadence library for a partner — sourced from REFERRAL_90DAY_CADENCE.
-function showReferralScripts(name, agentId){
+// Full 12-week cadence library for a partner — sourced from REFERRAL_CADENCES.
+function showReferralScripts(name, agentId, partnerType){
+  const cadenceType = cadenceTypeForPartnerType(partnerType);
+  const cadence = REFERRAL_CADENCES[cadenceType];
+  if(!cadence){
+    document.getElementById('overlay').style.display='flex';
+    document.getElementById('modal-content').innerHTML = `<div class="modal-title">📋 Scripts — ${name}</div>
+      <div style="padding:16px;color:var(--muted);font-size:13px">No 90-Day Cadence exists yet for partner type "${partnerType||'Other'}".</div>
+      <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
+    return;
+  }
   const { pf, pl } = referralProducerNames(agentId);
   const icons = { text:'💬', call:'📞', email:'📧' };
-  const html = `<div class="modal-title">📋 90-Day Cadence Scripts — ${name}</div>
+  const ideasHtml = (cadenceType==='roofer') ? `
+    <div style="margin-top:6px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <div style="background:#f8fafc;padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy);border-bottom:1px solid var(--border)">💡 Quarterly Value Ideas (reference only — not scheduled)</div>
+      <ul style="margin:0;padding:10px 12px 10px 28px;font-size:12px;color:var(--text);line-height:1.7">
+        ${REFERRAL_ROOFER_QUARTERLY_IDEAS.map(i=>`<li>${i}</li>`).join('')}
+      </ul>
+    </div>` : '';
+  const html = `<div class="modal-title">📋 ${REFERRAL_CADENCE_LABELS[cadenceType]} 90-Day Cadence Scripts — ${name}</div>
     <div style="max-height:65vh;overflow-y:auto;padding-right:4px">
-      ${REFERRAL_90DAY_CADENCE.map(t=>{
+      ${cadence.map(t=>{
         const content = (t.channel==='email' ? `SUBJECT: ${t.subject}\n\n` : '') + t.body(name, pf, pl);
         return `
         <div style="margin-bottom:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
@@ -4730,6 +4746,7 @@ function showReferralScripts(name, agentId){
             <pre style="margin:0;font-family:inherit;font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${content}</pre>
           </div>
         </div>`;}).join('')}
+      ${ideasHtml}
     </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
   document.getElementById('overlay').style.display='flex';
@@ -4737,15 +4754,18 @@ function showReferralScripts(name, agentId){
 }
 
 // Single-week script preview — matches the per-task 📋 button pattern used for quoted leads.
-function showReferralCadenceScript(week, partnerName){
-  const t = REFERRAL_90DAY_CADENCE.find(x=>x.week===Number(week));
+function showReferralCadenceScript(taskId){
+  const task = DB.tasks.find(x=>x.id===taskId);
+  if(!task) return;
+  const cadence = REFERRAL_CADENCES[task.cadenceType];
+  const t = cadence && cadence.find(x=>x.week===task.week);
   if(!t) return;
-  const partner = DB.referralPartners.find(p=>p.name===partnerName);
-  const { pf, pl } = referralProducerNames(partner?.agentId);
-  const firstName = (partnerName||'').split(' ')[0];
+  const partner = DB.referralPartners.find(p=>p.id===task.partnerId);
+  const { pf, pl } = referralProducerNames(task.agentId);
+  const firstName = (task.partnerName||'').split(' ')[0];
   const content = (t.channel==='email' ? `SUBJECT: ${t.subject}\n\n` : '') + t.body(firstName, pf, pl);
   const icons = { text:'💬', call:'📞', email:'📧' };
-  const html = `<div class="modal-title">${icons[t.channel]} ${t.label} — ${partnerName}</div>
+  const html = `<div class="modal-title">${icons[t.channel]} ${t.label} — ${task.partnerName}</div>
     ${t.channel==='email' ? `<div style="padding:8px 12px;background:#dbeafe;color:#1d4ed8;border-radius:8px;font-size:12px;margin-bottom:10px">This email sends automatically — no need to send it yourself.</div>` : ''}
     <div class="script-block" style="border:1px solid var(--border);border-radius:8px;padding:12px">
       <pre style="margin:0;font-family:inherit;font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6">${content}</pre>
@@ -4800,7 +4820,7 @@ function referralPartnerForm(d){
     <div class="form-row">
       <div class="form-group"><label class="form-label">Partner Type</label>
         <select class="form-input" id="rp-type">
-          ${['Realtor','Mortgage Lender','Financial Advisor','Auto Dealer','CPA / Accountant','Attorney','Builder','Title Company','Other'].map(x=>`<option${ed&&d.type===x?' selected':''}>${x}</option>`).join('')}
+          ${['Realtor','Mortgage Lender','Roofer','Financial Advisor','Auto Dealer','CPA / Accountant','Attorney','Builder','Title Company','Other'].map(x=>`<option${ed&&d.type===x?' selected':''}>${x}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="rp-phone" type="tel" value="${ed?d.phone||'':''}" placeholder="(555) 000-0000"></div>
@@ -4855,7 +4875,7 @@ function referralPartnerForm(d){
       <input type="checkbox" id="rp-sequence" checked style="margin-top:3px;flex-shrink:0">
       <label for="rp-sequence" style="font-size:12px;color:#166534;cursor:pointer">
         <strong>Create 90-Day Contact Cadence</strong> — 12 weekly touchpoints (text/call/email, repeating every 90 days). First touch due 5 days from today. Emails send automatically; calls and texts appear as tasks for the assigned producer.
-        <div style="color:#166534;opacity:.75;margin-top:2px">Only applies to Realtor / Mortgage Lender partners — other partner types (e.g. roofers) need a separate cadence.</div>
+        <div style="color:#166534;opacity:.75;margin-top:2px">Content is tailored by partner type — Realtor/Mortgage Lender and Roofer each have their own cadence. Other partner types don't have a cadence yet.</div>
       </label>
     </div>` : ''}
     <div class="modal-actions">
@@ -4892,14 +4912,14 @@ async function saveReferralPartner(id){
     toast('Partner updated'); closeModal();
   } else {
     const createSequence = document.getElementById('rp-sequence')?.checked !== false;
-    const cadenceEligible = ['Realtor','Mortgage Lender'].includes(data.type);
+    const cadenceType = cadenceTypeForPartnerType(data.type);
     const ref = await db.collection('referralPartners').add(data);
     logActivity('🤝','#dbeafe',`New referral partner added: <b>${name}</b>`);
-    if(createSequence && cadenceEligible){
-      await createReferralPartnerCadence(ref.id, data, 1, new Date());
-      toast('Partner added! 90-Day Contact Cadence created (12 tasks) ✅');
-    } else if(createSequence && !cadenceEligible){
-      toast(`Partner added — 90-Day Cadence only applies to Realtors/Mortgage Lenders (this is ${data.type||'Other'})`);
+    if(createSequence && cadenceType){
+      await createReferralPartnerCadence(ref.id, data, 1, new Date(), cadenceType);
+      toast(`Partner added! ${REFERRAL_CADENCE_LABELS[cadenceType]} 90-Day Cadence created (12 tasks) ✅`);
+    } else if(createSequence && !cadenceType){
+      toast(`Partner added — no 90-Day Cadence exists yet for type "${data.type||'Other'}"`);
     } else {
       toast('Partner added!');
     }
@@ -4911,7 +4931,16 @@ async function saveReferralPartner(id){
 // Week 1 is due 5 days after the partner is added; each following week is +7 days.
 // Emails (weeks 3, 6, 9, 12) auto-send via netlify/functions/send-referral-cadence-emails.mjs,
 // which also creates the next cycle's 12 tasks after the Week 12 email goes out.
-const REFERRAL_90DAY_CADENCE = [
+// Two libraries exist — Realtor/Mortgage Lender partners get REFERRAL_REALTOR_CADENCE,
+// Roofer partners get REFERRAL_ROOFER_CADENCE. cadenceTypeForPartnerType() maps
+// partner type → which library + whether the cadence applies at all.
+function cadenceTypeForPartnerType(type){
+  if(type==='Realtor' || type==='Mortgage Lender') return 'realtor';
+  if(type==='Roofer') return 'roofer';
+  return null;
+}
+const REFERRAL_CADENCE_LABELS = { realtor: 'Realtor/Mortgage', roofer: 'Roofer' };
+const REFERRAL_REALTOR_CADENCE = [
   { week: 1,  channel: 'text',  priority: 'high',
     label: 'Week 1 — Value Text',
     body: (fn, pf) => `Good morning, ${fn}! Just wanted to remind you we're here if you need a quick insurance quote or have an unusual property come up. We can usually turn around quotes the same day, and we're always happy to answer questions before your client writes an offer. Hope you have a great week!` },
@@ -4954,18 +4983,75 @@ const REFERRAL_90DAY_CADENCE = [
     body: (fn, pf, pl) => `Hi ${fn},\n\nI just wanted to say thank you for your partnership. We appreciate the opportunity to work alongside you and help make your transactions smoother through responsive communication and dependable advice.\n\nIf there's ever anything we can do better to support your business, I'd love your feedback.\n\nThank you!\n\n${pl}\nAllen Insurance Agency` },
 ];
 
+const REFERRAL_ROOFER_CADENCE = [
+  { week: 1,  channel: 'text',  priority: 'high',
+    label: 'Week 1 — Value Text',
+    body: (fn, pf) => `Good morning, ${fn}! Just wanted to let you know we're here if you need a fast insurance opinion on a roof-related question. If one of your customers has coverage questions before filing a claim, we're happy to help.` },
+  { week: 2,  channel: 'call',  priority: 'high',
+    label: 'Week 2 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, it's ${pf} with Allen Insurance Agency.\n\nHow has business been lately? What projects are keeping your crews busiest?\n\nAre homeowners asking any insurance questions we can help answer?\n\nWe'd love to be a resource for your team and your customers.` },
+  { week: 3,  channel: 'email', priority: 'medium',
+    label: 'Week 3 — Educational Email',
+    subject: 'Helping Homeowners Before the Claim',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nOne of the best ways we can work together is by helping homeowners understand their coverage before a claim is filed. If you ever have someone with questions about deductibles, replacement cost, or the claims process, feel free to connect us.\n\nThanks for your partnership!\n\n${pl}` },
+  { week: 4,  channel: 'text',  priority: 'high',
+    label: 'Week 4 — Text',
+    body: (fn, pf) => `If you run into a homeowner who wants an honest insurance opinion before filing a claim, send them our way. We'd be happy to help them understand their options.` },
+  { week: 5,  channel: 'call',  priority: 'high',
+    label: 'Week 5 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} here.\n\nWhat roof issues are you seeing most often right now? We'd love to share preventative maintenance tips with our homeowners and give your company credit.` },
+  { week: 6,  channel: 'email', priority: 'medium',
+    label: 'Week 6 — Educational Email',
+    subject: 'Seasonal Roof Maintenance Tips',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nWe're sharing seasonal home maintenance tips with our clients. If you have a favorite roof checklist, we'd love to feature it and recommend your company.\n\n${pl}` },
+  { week: 7,  channel: 'text',  priority: 'high',
+    label: 'Week 7 — Text',
+    body: (fn, pf) => `Hope you're having a great week! If a customer needs an insurance review after a roof replacement, we'd be happy to help.` },
+  { week: 8,  channel: 'call',  priority: 'high',
+    label: 'Week 8 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} with Allen Insurance.\n\nAnything changing in the roofing market? Are there any insurance myths homeowners believe that we can help clear up?` },
+  { week: 9,  channel: 'email', priority: 'medium',
+    label: 'Week 9 — Educational Email',
+    subject: 'Preparing Homeowners for Storm Season',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nLet's help homeowners prepare before storms arrive. We can even co-host a homeowner education event or create a joint checklist.\n\n${pl}` },
+  { week: 10, channel: 'text',  priority: 'high',
+    label: 'Week 10 — Text',
+    body: (fn, pf) => `Thanks again for being a great partner. Let us know if we can support your team or your customers this week.` },
+  { week: 11, channel: 'call',  priority: 'high',
+    label: 'Week 11 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}.\n\nI'd love to get to know the rest of your team. Is there anyone else I should connect with so they know we're available as an insurance resource?` },
+  { week: 12, channel: 'email', priority: 'high',
+    label: 'Week 12 — Appreciation Email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nThank you for trusting Allen Insurance Agency as a partner. We appreciate your professionalism and look forward to helping many more homeowners together.\n\n${pl}` },
+];
+
+// Reference-only ideas (no fixed schedule) — surfaced in the Scripts library, not auto-scheduled.
+const REFERRAL_ROOFER_QUARTERLY_IDEAS = [
+  'Record a joint homeowner education video.',
+  'Feature the roofer in your homeowner newsletter.',
+  'Exchange educational social media content.',
+  'Host a lunch-and-learn together.',
+  'Send handwritten thank-you notes after referrals.',
+  'Share seasonal hail and wind claim trends.',
+];
+
+const REFERRAL_CADENCES = { realtor: REFERRAL_REALTOR_CADENCE, roofer: REFERRAL_ROOFER_CADENCE };
+
 function referralProducerNames(agentId){
   const p = DB.producers.find(x=>x.id===agentId);
   const pl = p ? p.name : 'Jason Allen';
   return { pf: pl.split(' ')[0], pl };
 }
 
-async function createReferralPartnerCadence(partnerId, partnerData, cycle, anchorDate) {
+async function createReferralPartnerCadence(partnerId, partnerData, cycle, anchorDate, cadenceType) {
   const name = partnerData.name;
   const firstName = name.split(' ')[0];
   const anchorStr = anchorDate.toISOString().slice(0, 10);
+  const cadence = REFERRAL_CADENCES[cadenceType];
+  if(!cadence) return;
   const batch = db.batch();
-  for (const t of REFERRAL_90DAY_CADENCE) {
+  for (const t of cadence) {
     const due = new Date(anchorDate);
     due.setDate(due.getDate() + 5 + (t.week - 1) * 7);
     batch.set(db.collection('tasks').doc(), {
@@ -4978,6 +5064,7 @@ async function createReferralPartnerCadence(partnerId, partnerData, cycle, ancho
       partnerName: name,
       touchpointType: t.channel,
       type: 'referral-partner-cadence',
+      cadenceType,
       week: t.week,
       cycle,
       cadenceAnchor: anchorStr,
