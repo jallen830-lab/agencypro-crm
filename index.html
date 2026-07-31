@@ -3355,12 +3355,9 @@ async function saveLead(id){
   else { const ref = await db.collection('leads').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()}); savedId = ref.id; toast('Lead added!'); logActivity('👤','#f1f5f9',`New lead: <b>${fn} ${ln}</b> — ${data.line} (${data.leadType})`); }
 
   // Auto-create follow-up tasks when lead moves to Quoted
+  // All sources (including Permits) use the same standard follow-up sequence.
   if(isNowQuoted && savedId){
-    if(data.source === 'Permits'){
-      await createPermitsQuotedTasks(savedId, data);
-    } else {
-      await createQuotedFollowUpTasks(savedId, data);
-    }
+    await createQuotedFollowUpTasks(savedId, data);
   }
 
   // Auto-cancel open quoted follow-up tasks when lead leaves Quoted stage
