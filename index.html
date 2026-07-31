@@ -3375,7 +3375,7 @@ function leadForm(d, defaultLeadType){
   const ed=!!d;
   const lt = ed ? (d.leadType||'Personal Lines') : (defaultLeadType||'Personal Lines');
   const isCommercial = lt==='Commercial';
-  const quotes = ed && d.quotes && d.quotes.length ? d.quotes : [{line:'Auto',carrier:'',premium:'',notes:''}];
+  const quotes = ed && d.quotes && d.quotes.length ? d.quotes : [{line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}];
   const quoteRows = quotes.map((q,i)=>buildQuoteRow(q,i)).join('');
   return `<div class="modal-title">${ed?'Edit Lead':'Add New Lead'}</div>
 
@@ -3470,6 +3470,14 @@ function buildQuoteRow(q, i){
         <input class="form-input qr-notes" value="${q.notes||''}" placeholder="Coverage details, deductible, etc.">
       </div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Current Carrier</label>
+        <input class="form-input qr-currcarrier" value="${q.currentCarrier||''}" placeholder="e.g. Allstate">
+      </div>
+      <div class="form-group"><label class="form-label">Renewal Date</label>
+        <input class="form-input qr-renewal" type="date" value="${q.renewalDate||''}">
+      </div>
+    </div>
   </div>`;
 }
 
@@ -3478,7 +3486,7 @@ function addQuoteRow(){
   const container = document.getElementById('quotes-container');
   const i = container.querySelectorAll('.quote-row').length;
   const div = document.createElement('div');
-  div.innerHTML = buildQuoteRow({line:'Auto',carrier:'',premium:'',notes:''}, i);
+  div.innerHTML = buildQuoteRow({line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}, i);
   container.appendChild(div.firstChild);
 }
 function removeQuoteRow(i){
@@ -3501,7 +3509,9 @@ function collectQuotes(){
     carrier: row.querySelector('.qr-carrier')?.value.trim()||'',
     premium: Number(row.querySelector('.qr-premium')?.value)||0,
     notes:   row.querySelector('.qr-notes')?.value.trim()||'',
-  })).filter(q=>q.carrier||q.premium);
+    currentCarrier: row.querySelector('.qr-currcarrier')?.value.trim()||'',
+    renewalDate:    row.querySelector('.qr-renewal')?.value||'',
+  })).filter(q=>q.carrier||q.premium||q.currentCarrier||q.renewalDate);
 }
 
 async function saveLead(id){
