@@ -2933,7 +2933,7 @@ function renderScoreboard(){
   // Stage 5 — producers table
   try {
     if(!tbody) return;
-    const stats = calcProducerStats('all');
+    const stats = calcProducerStats('folio');
     if(!stats.length){
       tbody.innerHTML='<tr><td colspan="7" class="empty-state" style="padding:16px">No producers yet.</td></tr>';
       return;
