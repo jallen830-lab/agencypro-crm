@@ -2439,7 +2439,7 @@ function renderLeads(){
       <td><span class="badge ${statusClass(l.status)}">${l.status}</span></td>
       <td style="font-weight:600;color:var(--teal)">${fmt$(l.premium)}</td>
       <td style="color:var(--muted)">${fmtDate(l.date)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
     </tr>`).join(''):'<tr><td colspan="8" class="empty-state">No leads match your filters</td></tr>';
 }
 async function deleteLead(id){
@@ -3042,7 +3042,7 @@ function renderTasks(){
         <div style="font-size:11px;color:var(--muted);margin-top:3px">
           ${ov?'<strong style="color:var(--red)">OVERDUE — </strong>':''}
           ${isFuture?'<span style="color:#3b82f6">📅 Upcoming — </span>':''}
-          Due: ${fmtDate(t.due)} &bull; ${agentName(t.agentId)||'You'}
+          Due: ${fmtDate(t.due)} &bull; ${agentName(t.agentId)||'You'}${t.leadName?` &bull; ${t.leadName}`:''}
         </div>
       </div>
       <span class="badge ${priorityClass(t.priority)}">${t.priority}</span>
@@ -3177,7 +3177,7 @@ async function logActivity(icon,bg,text){
 }
 
 // ── MODALS ──
-function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
+function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
 function closeModal(){ document.getElementById('overlay').style.display='none'; }
 function closeOverlay(e){ if(e.target===document.getElementById('overlay'))closeModal(); }
 function agentOpts(sel){ return '<option value="">Unassigned</option>'+DB.producers.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${p.name}</option>`).join(''); }
@@ -3381,6 +3381,46 @@ async function saveTask(id){
   const data={text,due:document.getElementById('t-du').value,priority:document.getElementById('t-pr').value,agentId:document.getElementById('t-ag').value,done:false};
   if(id) await db.collection('tasks').doc(id).update(data); else await db.collection('tasks').add(data);
   toast(id?'Task updated':'Task added'); closeModal();
+}
+
+// ── AD-HOC TASK ON A LEAD ─────────────────────────────────────────────
+function leadTaskForm(lead){
+  const today = new Date().toISOString().slice(0,10);
+  const leadName = `${lead.firstName||''} ${lead.lastName||''}`.trim();
+  return `<div class="modal-title">+ Task — ${leadName}</div>
+    <div class="form-group"><label class="form-label">Task Description *</label><input class="form-input" id="lt-tx" placeholder="Describe the task..."></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" id="lt-du" type="date" value="${today}"></div>
+      <div class="form-group"><label class="form-label">Priority</label><select class="form-input" id="lt-pr">${['high','medium','low'].map(x=>`<option${x==='medium'?' selected':''}>${x}</option>`).join('')}</select></div>
+    </div>
+    <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="lt-ag">${agentOpts(lead.agentId||'')}</select></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveLeadTask('${lead.id}')">Add Task</button></div>`;
+}
+async function saveLeadTask(leadId){
+  const text = document.getElementById('lt-tx').value.trim();
+  if(!text){ alert('Description required'); return; }
+  const due = document.getElementById('lt-du').value;
+  const priority = document.getElementById('lt-pr').value;
+  const agentId = document.getElementById('lt-ag').value;
+  const lead = DB.leads.find(l=>l.id===leadId);
+  const leadName = lead ? `${lead.firstName||''} ${lead.lastName||''}`.trim() : '';
+  const ref = await db.collection('tasks').add({
+    text, due, priority, agentId, done:false,
+    leadId, leadName,
+    type: 'lead-task',
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  logActivity('📝','#f1f5f9',`Task added for <b>${leadName}</b>: ${text}`);
+  toast('✅ Task added!');
+  closeModal();
+  // Notify the assigned producer by email — fire-and-forget, don't block the UI on it
+  if(agentId){
+    fetch('/.netlify/functions/notify-task-added', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: ref.id })
+    }).catch(err => console.error('notify-task-added failed:', err));
+  }
 }
 
 // ── QUOTED FOLLOW-UP AUTOMATION ──────────────────────────────────────

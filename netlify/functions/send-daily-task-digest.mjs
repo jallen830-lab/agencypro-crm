@@ -65,6 +65,7 @@ const TYPE_LABELS = {
   'referral-partner-cadence': 'Referral Partner',
   'referral-partner-sequence':'Referral Partner',
   'referral-thankyou':        'Referral Thank-You',
+  'lead-task':                'Lead Task',
 };
 function taskCategory(t) {
   return TYPE_LABELS[t.type] || 'General Task';
