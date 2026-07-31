@@ -3989,7 +3989,7 @@ function renderReferralPartnerSequence(){
   const el = document.getElementById('referral-sequence-list');
   if(!el) return;
   const today = new Date().toISOString().slice(0,10);
-  const open = (DB.tasks||[]).filter(t => t.type==='referral-partner-sequence' && !t.done && t.due <= today);
+  const open = (DB.tasks||[]).filter(t => (t.type==='referral-partner-cadence' || t.type==='referral-partner-sequence') && !t.done && t.due <= today);
   const badge = document.getElementById('referral-sequence-badge');
   if(!open.length){
     el.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;font-size:13px">No upcoming referral partner touchpoints</div>';
@@ -4004,32 +4004,39 @@ function renderReferralPartnerSequence(){
     if(!byPartner[key]) byPartner[key] = [];
     byPartner[key].push(t);
   });
-  const typeColors = {
-    '📞 Call':'#0ea5a0','📧 Email':'#3b82f6','💬 Text':'#8b5cf6',
-    '☕ Visit':'#f59e0b','🎁 Gift':'#ef4444'
-  };
+  const channelColors = { call:'#0ea5a0', email:'#3b82f6', text:'#8b5cf6' };
   let html = '';
   Object.keys(byPartner).sort().forEach(partnerName => {
-    const tasks = byPartner[partnerName].sort((a,b)=>(a.sequenceMonth||0)-(b.sequenceMonth||0));
+    const tasks = byPartner[partnerName].sort((a,b)=>(a.week||a.sequenceMonth||0)-(b.week||b.sequenceMonth||0));
     html += `<div style="border-bottom:1px solid var(--border);padding:10px 12px">
       <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px">
         🤝 ${partnerName}
-        <span style="font-size:11px;font-weight:400;color:var(--muted)">${tasks.length} touchpoint${tasks.length!==1?'s':''} remaining</span>
+        <span style="font-size:11px;font-weight:400;color:var(--muted)">${tasks.length} touchpoint${tasks.length!==1?'s':''} remaining &bull; ${getProducerName(tasks[0].agentId)||'Unassigned'}</span>
       </div>`;
     tasks.forEach(t => {
       const overdue = t.due < today;
       const dueToday = t.due === today;
-      const typeColor = typeColors[t.touchpointType] || '#64748b';
+      const isCadence = t.type==='referral-partner-cadence';
+      const channel = isCadence ? t.touchpointType : null;
+      const typeColor = isCadence ? (channelColors[channel]||'#64748b') : ({'📞 Call':'#0ea5a0','📧 Email':'#3b82f6','💬 Text':'#8b5cf6','☕ Visit':'#f59e0b','🎁 Gift':'#ef4444'}[t.touchpointType] || '#64748b');
+      const badgeLabel = isCadence ? `Wk ${t.week||'?'}` : `Mo ${t.sequenceMonth||'?'}`;
       const dueBadge = overdue
         ? `<span style="background:#fee2e2;color:#ef4444;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">Overdue</span>`
         : dueToday
           ? `<span style="background:#fef3c7;color:#d97706;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">Today</span>`
           : `<span style="font-size:10px;color:var(--muted)">${fmtDate(t.due)}</span>`;
+      const autoNote = (isCadence && t.autoSend)
+        ? `<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🤖 auto-sends</span>`
+        : '';
+      const scriptBtn = (isCadence && channel!=='email')
+        ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralCadenceScript(${t.week},'${(t.partnerName||'').replace(/'/g,"\\'")}')">📋</button>`
+        : '';
       html += `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;padding-left:4px">
-        <span style="background:${typeColor};color:#fff;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;flex-shrink:0;min-width:58px;text-align:center">Mo ${t.sequenceMonth||'?'}</span>
+        <span style="background:${typeColor};color:#fff;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;flex-shrink:0;min-width:44px;text-align:center">${badgeLabel}</span>
         <div style="flex:1;font-size:12px;color:var(--text);line-height:1.4">${t.text}</div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-          ${dueBadge}
+          ${dueBadge}${autoNote}
+          ${scriptBtn}
           <button class="btn btn-primary btn-sm" onclick="dismissQuotedTask('${t.id}')" style="font-size:11px;padding:3px 8px">✓</button>
           <button class="btn btn-ghost btn-sm" onclick="rescheduleQuotedTask('${t.id}',30)" style="font-size:11px;padding:3px 8px">+30d</button>
         </div>
@@ -4685,6 +4692,7 @@ function renderReferrals(){
       <td style="color:var(--muted);font-size:12px">${p.lastContact?fmtDate(p.lastContact):'Never'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-ghost btn-sm" onclick="openModal('referralLog',{partnerId:'${p.id}',partnerName:'${p.name.replace(/'/g,"\\'")}' })">+ Log</button>
+        <button class="btn btn-ghost btn-sm" style="color:#8b5cf6" onclick="showReferralScripts('${p.name.replace(/'/g,"\\'")}','${p.agentId||''}')">📋 Scripts</button>
         <button class="btn btn-ghost btn-sm" onclick="openModal('referralPartner',DB.referralPartners.find(x=>x.id==='${p.id}'))">Edit</button>
         <button class="btn btn-danger btn-sm" onclick="deleteReferralPartner('${p.id}')">🗑</button>
       </td>
@@ -4703,78 +4711,49 @@ function renderReferrals(){
 }
 
 // ── REFERRAL SCRIPTS MODAL ───────────────────────────────────────────
-function showReferralScripts(name, type){
-  const scripts = [
-    { day: 'Day 1 — Intro Text', icon: '💬',
-      content: `Hi ${name}, this is Jason Allen with Allen Insurance Agency. We both work with homeowners here in DFW, and I wanted to introduce myself. I enjoy partnering with great ${type}s and mortgage professionals to help make closings smoother for clients. I’d love to connect sometime.` },
-    { day: 'Day 2 — Phone Call', icon: '📞',
-      content: `"Hi ${name}, this is Jason Allen with Allen Insurance Agency. I sent you a quick text yesterday because I work with quite a few homeowners in the area. I wasn’t calling to ask for referrals today. I simply wanted to introduce myself and learn more about your business. If it makes sense, I’d love to buy you coffee sometime next week."
-
-Voicemail: "Hi ${name}, Jason Allen with Allen Insurance Agency. Just wanted to introduce myself and see if you’d be open to grabbing coffee sometime. I’ll send you a quick text as well."` },
-    { day: 'Day 5 — Value Email', icon: '📧',
-      content: `Subject: Helping Homebuyers Avoid Insurance Surprises
-
-Hi ${name},
-
-One of the biggest frustrations for buyers is discovering insurance issues just before closing—whether it’s an older roof, high premiums, or unexpected underwriting requirements.
-
-Our team works hard to identify those issues early so buyers have options and closings stay on track.
-
-If you ever have a client who wants a second opinion or simply needs insurance questions answered before they write an offer, we’re always happy to help. No pressure—just a resource whenever you need one.
-
-Have a great week!
-Jason Allen | Allen Insurance Agency` },
-    { day: 'Day 14 — Check-In Text', icon: '💬',
-      content: `Hi ${name}, hope your week is going well! Just wanted to check in and see how business has been. If you ever need a quick insurance quote or have a client with insurance questions before closing, don’t hesitate to reach out.` },
-    { day: 'Day 21 — Relationship Call', icon: '📞',
-      content: `"Jason here. I was just checking in. How’s the market treating you right now?"
-
-Spend 80% listening. Ask:
-• What types of buyers are you working with?
-• What’s been your biggest challenge lately?
-• Are insurance issues ever delaying your closings?
-• What would make an insurance partner more valuable?` },
-    { day: 'Day 30 — Educational Email', icon: '📧',
-      content: `Subject: Three Insurance Issues That Can Delay a Closing
-
-Hi ${name},
-
-A few insurance issues come up over and over during the home-buying process:
-
-• Older roofs that affect coverage or pricing
-• Homes with previous claims or underwriting concerns
-• Buyers waiting until the last minute to shop for insurance
-
-We encourage buyers to start the insurance conversation early so there are no surprises before closing.
-
-If you’d ever like a second opinion on a property or have a buyer with questions, we’re happy to help.
-
-Thanks, and have a great week!
-Jason Allen | Allen Insurance Agency` },
-    { day: 'Day 38 — Coffee Invitation', icon: '☕',
-      content: `Hi ${name}, I’d love to buy you coffee sometime over the next couple of weeks. No sales pitch—I always enjoy meeting other professionals who work with homeowners. Let me know if you have 20–30 minutes one morning.` },
-    { day: 'Day 45 — Final Touch', icon: '💬',
-      content: `Just wanted to stay connected. If I can ever help one of your clients or answer an insurance question, please keep me in mind. Wishing you continued success this year!` },
-    { day: 'When They Send a Referral', icon: '🎯',
-      content: `"Thank you for trusting us with your client. We’ll take great care of them, keep them informed throughout the process, and I’ll personally let you know once everything is complete."` },
-    { day: 'After Closing', icon: '✅',
-      content: `"Thanks again for the introduction. We truly appreciate your confidence in us. Is there anything we could have done to make the experience even better for you or your client?"` },
-  ];
-  const html = `<div class="modal-title">📋 Referral Scripts — ${name}</div>
+// Full 12-week cadence library for a partner — sourced from REFERRAL_90DAY_CADENCE.
+function showReferralScripts(name, agentId){
+  const { pf, pl } = referralProducerNames(agentId);
+  const icons = { text:'💬', call:'📞', email:'📧' };
+  const html = `<div class="modal-title">📋 90-Day Cadence Scripts — ${name}</div>
     <div style="max-height:65vh;overflow-y:auto;padding-right:4px">
-      ${scripts.map(s=>`
+      ${REFERRAL_90DAY_CADENCE.map(t=>{
+        const content = (t.channel==='email' ? `SUBJECT: ${t.subject}\n\n` : '') + t.body(name, pf, pl);
+        return `
         <div style="margin-bottom:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
           <div style="background:#f8fafc;padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)">
-            <span>${s.icon}</span><span>${s.day}</span>
-            <button onclick="navigator.clipboard.writeText(this.closest('.script-block').querySelector('pre').textContent).then(()=>toast('Copied!'))" 
+            <span>${icons[t.channel]}</span><span>${t.label}${t.channel==='email'?' (auto-sends)':''}</span>
+            <button onclick="navigator.clipboard.writeText(this.closest('.script-block').querySelector('pre').textContent).then(()=>toast('Copied!'))"
               style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted)">Copy</button>
           </div>
           <div class="script-block" style="padding:10px 12px">
-            <pre style="margin:0;font-family:inherit;font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${s.content}</pre>
+            <pre style="margin:0;font-family:inherit;font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${content}</pre>
           </div>
-        </div>`).join('')}
+        </div>`;}).join('')}
     </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('modal-content').innerHTML = html;
+}
+
+// Single-week script preview — matches the per-task 📋 button pattern used for quoted leads.
+function showReferralCadenceScript(week, partnerName){
+  const t = REFERRAL_90DAY_CADENCE.find(x=>x.week===Number(week));
+  if(!t) return;
+  const partner = DB.referralPartners.find(p=>p.name===partnerName);
+  const { pf, pl } = referralProducerNames(partner?.agentId);
+  const firstName = (partnerName||'').split(' ')[0];
+  const content = (t.channel==='email' ? `SUBJECT: ${t.subject}\n\n` : '') + t.body(firstName, pf, pl);
+  const icons = { text:'💬', call:'📞', email:'📧' };
+  const html = `<div class="modal-title">${icons[t.channel]} ${t.label} — ${partnerName}</div>
+    ${t.channel==='email' ? `<div style="padding:8px 12px;background:#dbeafe;color:#1d4ed8;border-radius:8px;font-size:12px;margin-bottom:10px">This email sends automatically — no need to send it yourself.</div>` : ''}
+    <div class="script-block" style="border:1px solid var(--border);border-radius:8px;padding:12px">
+      <pre style="margin:0;font-family:inherit;font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6">${content}</pre>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="navigator.clipboard.writeText(this.closest('#modal-content').querySelector('.script-block pre').textContent).then(()=>toast('Copied!'))">Copy</button>
+    </div>`;
   document.getElementById('overlay').style.display='flex';
   document.getElementById('modal-content').innerHTML = html;
 }
@@ -4831,6 +4810,10 @@ function referralPartnerForm(d){
       <div class="form-group"><label class="form-label">Last Contact Date</label><input class="form-input" id="rp-contact" type="date" value="${ed?d.lastContact||'':''}"></div>
     </div>
     <div class="form-row">
+      <div class="form-group"><label class="form-label">Assigned Producer</label><select class="form-input" id="rp-agent">${agentOpts(ed?d.agentId:'')}</select></div>
+      <div class="form-group"></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><label class="form-label">CRM Stage</label>
         <select class="form-input" id="rp-stage">
           ${['New Prospect','Contact Attempted','Conversation','Coffee Scheduled','Active Referral Partner','Sent Referral','Top Partner','Needs Follow-up','Inactive'].map(x=>`<option${ed&&d.stage===x?' selected':''}>${x}</option>`).join('')}
@@ -4871,7 +4854,7 @@ function referralPartnerForm(d){
     ${!ed ? `<div style="padding:10px 12px;background:#f0fdf4;border-radius:8px;margin-top:8px;display:flex;align-items:flex-start;gap:10px">
       <input type="checkbox" id="rp-sequence" checked style="margin-top:3px;flex-shrink:0">
       <label for="rp-sequence" style="font-size:12px;color:#166534;cursor:pointer">
-        <strong>Create full relationship sequence</strong> — 45-day prospecting + weekly 4-touch cadence for 12 months + quarterly business reviews + Surprise &amp; Delight calendar (70+ tasks)
+        <strong>Create 90-Day Contact Cadence</strong> — 12 weekly touchpoints (text/call/email, repeating every 90 days). First touch due 5 days from today. Emails send automatically; calls and texts appear as tasks for the assigned producer.
       </label>
     </div>` : ''}
     <div class="modal-actions">
@@ -4889,6 +4872,7 @@ async function saveReferralPartner(id){
     area: document.getElementById('rp-area').value,
     phone: document.getElementById('rp-phone').value.trim(),
     email: document.getElementById('rp-email').value.trim(),
+    agentId: document.getElementById('rp-agent').value,
     lastContact: document.getElementById('rp-contact').value,
     notes: document.getElementById('rp-notes').value.trim(),
     birthday:   document.getElementById('rp-birthday')?.value||'',
@@ -4910,206 +4894,95 @@ async function saveReferralPartner(id){
     const ref = await db.collection('referralPartners').add(data);
     logActivity('🤝','#dbeafe',`New referral partner added: <b>${name}</b>`);
     if(createSequence){
-      await createReferralPartnerSequence(ref.id, data);
-      toast('Partner added! Full relationship sequence created (70+ tasks) ✅');
+      await createReferralPartnerCadence(ref.id, data, 1, new Date());
+      toast('Partner added! 90-Day Contact Cadence created (12 tasks) ✅');
     } else {
       toast('Partner added!');
     }
     closeModal();
   }
 }
-// ── REFERRAL PARTNER SEQUENCES ───────────────────────────────────────
-
-// 45-DAY PROSPECTING CADENCE (for new prospects)
-// ── REFERRAL PARTNER SEQUENCES ───────────────────────────────────────
-
-// 45-DAY PROSPECTING CADENCE — unchanged, keeps the initial outreach
-const REFERRAL_PROSPECT_SEQUENCE = [
-  { day: 1,  type: '💬 Text',   priority: 'high',   label: 'Day 1 — Intro Text',
-    text: (name, co) => `💬 Text ${name}${co?' ('+co+')':''} — Day 1 intro: "Hi ${name}, this is Jason Allen with Allen Insurance Agency. We both work with homeowners in DFW. I'd love to connect sometime."` },
-  { day: 2,  type: '📞 Call',   priority: 'high',   label: 'Day 2 — Intro Call',
-    text: (name, co) => `📞 Call ${name}${co?' ('+co+')':''} — Day 2: Intro call. Don't ask for referrals. Learn their business. Offer coffee. Leave voicemail + follow-up text if no answer.` },
-  { day: 5,  type: '📧 Email',  priority: 'medium', label: 'Day 5 — Value Email',
-    text: (name, co) => `📧 Email ${name}${co?' ('+co+')':''} — Day 5: "Helping Homebuyers Avoid Insurance Surprises" — position yourself as a resource, not a solicitor.` },
-  { day: 10, type: '👍 Social', priority: 'low',    label: 'Day 10 — Social Engagement',
-    text: (name, co) => `👍 Engage with ${name}${co?' ('+co+')':''} on social — like or comment on a recent post. Stay on their radar.` },
-  { day: 14, type: '💬 Text',   priority: 'medium', label: 'Day 14 — Check-In Text',
-    text: (name, co) => `💬 Text ${name}${co?' ('+co+')':''} — Day 14 check-in: "Hope your week is going well! If you ever have a client with insurance questions before closing, don't hesitate to reach out."` },
-  { day: 21, type: '📞 Call',   priority: 'high',   label: 'Day 21 — Relationship Call',
-    text: (name, co) => `📞 Call ${name}${co?' ('+co+')':''} — Day 21: Ask about their market. Spend 80% listening. What types of buyers? Are insurance issues delaying closings? What would make an insurance partner more valuable?` },
-  { day: 30, type: '📧 Email',  priority: 'medium', label: 'Day 30 — Educational Email',
-    text: (name, co) => `📧 Email ${name}${co?' ('+co+')':''} — Day 30: "Three Insurance Issues That Can Delay a Closing" — older roofs, underwriting concerns, last-minute shoppers.` },
-  { day: 38, type: '☕ Coffee', priority: 'high',   label: 'Day 38 — Coffee Invitation',
-    text: (name, co) => `☕ Coffee invite to ${name}${co?' ('+co+')':''} — Day 38: "I'd love to buy you coffee. No sales pitch — just enjoy meeting other professionals who work with homeowners. 20-30 min?"` },
-  { day: 45, type: '💬 Text',   priority: 'medium', label: 'Day 45 — Final Touch',
-    text: (name, co) => `💬 Final check-in text to ${name}${co?' ('+co+')':''} — Day 45: "Just wanted to stay connected. If I can ever help one of your clients, please keep me in mind." Then roll into weekly cadence.` },
+// ── REFERRAL PARTNER 90-DAY CONTACT CADENCE ──────────────────────────
+// 12 weekly touchpoints, cycling text → call → email, repeating every 90 days.
+// Week 1 is due 5 days after the partner is added; each following week is +7 days.
+// Emails (weeks 3, 6, 9, 12) auto-send via netlify/functions/send-referral-cadence-emails.mjs,
+// which also creates the next cycle's 12 tasks after the Week 12 email goes out.
+const REFERRAL_90DAY_CADENCE = [
+  { week: 1,  channel: 'text',  priority: 'high',
+    label: 'Week 1 — Value Text',
+    body: (fn, pf) => `Good morning, ${fn}! Just wanted to remind you we're here if you need a quick insurance quote or have an unusual property come up. We can usually turn around quotes the same day, and we're always happy to answer questions before your client writes an offer. Hope you have a great week!` },
+  { week: 2,  channel: 'call',  priority: 'high',
+    label: 'Week 2 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, it's ${pf} with Allen Insurance Agency.\n\nI wanted to check in and see how things are going. What's the market looking like from your perspective lately?\n\nWhat types of properties or buyers are you seeing the most?\n\nAre there any insurance issues you've run into recently that have slowed down a closing?\n\nIf you ever have a buyer you're unsure about—or a property with an older roof, prior claims, acreage, pools, or anything unusual—feel free to send it over before they make an offer. Sometimes we can identify issues early and save everyone a lot of frustration.\n\nThanks again. I appreciate our partnership, and let me know if there's ever anything I can do to help.` },
+  { week: 3,  channel: 'email', priority: 'medium',
+    label: 'Week 3 — Educational Email',
+    subject: 'Three Insurance Issues That Can Delay a Closing',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nOne of the easiest ways to keep a transaction on schedule is to identify potential insurance issues early.\n\n• Roof condition or age\n• Prior claims\n• Replacement cost concerns\n\nIf you ever have a property that raises questions, send me the address before your client submits an offer. We're happy to review it and identify potential insurance concerns upfront.\n\nThank you for trusting Allen Insurance Agency as a resource.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 4,  channel: 'text',  priority: 'high',
+    label: 'Week 4 — Helpful Text',
+    body: (fn, pf) => `I saw several homes with older roofs this week, and it reminded me that insurance questions can come up unexpectedly. If you ever want me to look at a property before your client submits an offer, just send me the address. Happy to help.` },
+  { week: 5,  channel: 'call',  priority: 'high',
+    label: 'Week 5 — Phone Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} here.\n\nWhat's the biggest challenge your buyers are facing right now?\n\nIs there anything insurance-related that's making transactions more difficult?\n\nIf you ever need a second opinion or want to bounce something off me before it becomes a problem, don't hesitate to call.` },
+  { week: 6,  channel: 'email', priority: 'medium',
+    label: 'Week 6 — Educational Email',
+    subject: 'Helping Buyers Avoid Last-Minute Insurance Surprises',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nEncouraging buyers to think about insurance earlier in the process can reduce stress before closing.\n\nA quick insurance review before the option period ends can help identify issues with older roofs, prior claims, replacement costs, vacant homes, and unique property features.\n\nSend us the address anytime—we're happy to help.\n\n${pl}` },
+  { week: 7,  channel: 'text',  priority: 'high',
+    label: 'Week 7 — Text',
+    body: (fn, pf) => `Hope business is going well! Just wanted to remind you that if you need a fast quote while you're writing an offer, we're here and ready to help.` },
+  { week: 8,  channel: 'call',  priority: 'high',
+    label: 'Week 8 — Phone Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} with Allen Insurance.\n\nHave you had any interesting transactions lately? Anything unique come across your desk?\n\nRemember we're always happy to answer insurance questions before they become problems.` },
+  { week: 9,  channel: 'email', priority: 'medium',
+    label: 'Week 9 — Educational Email',
+    subject: 'A Quick Home Maintenance Tip You Can Share with Clients',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nHere's a simple tip you can share with homeowners: clean gutters, trim trees away from the roof, check for plumbing leaks, and service the HVAC system regularly. Preventative maintenance helps reduce claims.\n\nFeel free to forward this to clients.\n\n${pl}` },
+  { week: 10, channel: 'text',  priority: 'high',
+    label: 'Week 10 — Text',
+    body: (fn, pf) => `Just checking in to see if you've got any properties with insurance questions. Even if you don't need a quote, I'm always happy to help think through a situation.` },
+  { week: 11, channel: 'call',  priority: 'high',
+    label: 'Week 11 — Phone Call',
+    body: (fn, pf) => `Hi ${fn}.\n\nWe've recently helped several buyers with homes that other carriers declined. If you ever have a difficult property—or a buyer who's been told 'no'—I'd love the opportunity to take a look.` },
+  { week: 12, channel: 'email', priority: 'high',
+    label: 'Week 12 — Appreciation Email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nI just wanted to say thank you for your partnership. We appreciate the opportunity to work alongside you and help make your transactions smoother through responsive communication and dependable advice.\n\nIf there's ever anything we can do better to support your business, I'd love your feedback.\n\nThank you!\n\n${pl}\nAllen Insurance Agency` },
 ];
 
-// WEEKLY RELATIONSHIP CADENCE — 4 touches/month for 12 months (48 tasks)
-// Week 1 = personal text, Week 2 = 5-min call, Week 3 = value email, Week 4 = social
-function buildWeeklySequence(name, co) {
-  const tasks = [];
-  for (let month = 1; month <= 12; month++) {
-    const base = (month - 1) * 4;
-    tasks.push({
-      weekNum: base + 1, month, weekInMonth: 1,
-      type: '💬 Text', priority: 'high',
-      text: `💬 Week ${base+1} personal text to ${name}${co?' ('+co+')':''} — Keep it personal. "Good morning! Hope you've had a great week. Just checking in — let me know if you have any clients who need an insurance review or have questions before closing. Always happy to help!"`
-    }, {
-      weekNum: base + 2, month, weekInMonth: 2,
-      type: '📞 Call', priority: 'high',
-      text: `📞 Week ${base+2} five-minute call to ${name}${co?' ('+co+')':''} — NOT a referral call. "Hey, I had a few minutes and wanted to check in. How's business? Anything changing in the market?" Spend 80% listening. Ask: How's inventory? Are buyers nervous? What types of clients are you seeing? What's slowing deals down?`
-    }, {
-      weekNum: base + 3, month, weekInMonth: 3,
-      type: '📧 Email', priority: 'medium',
-      text: `📧 Week ${base+3} monthly value email to ${name}${co?' ('+co+')':''} — Help them sell more homes, not insurance. Topic ideas: "5 things buyers should know before closing" / "Roof age issues we're seeing" / "How to avoid insurance surprises" / "What rising replacement costs mean for buyers". End with: "Feel free to forward this to any clients who might find it helpful." — now they're marketing you.`
-    }, {
-      weekNum: base + 4, month, weekInMonth: 4,
-      type: '👍 Social', priority: 'low',
-      text: `👍 Week ${base+4} social engagement with ${name}${co?' ('+co+')':''} — Spend 5 minutes. Like/comment on recent posts. Celebrate closings. Congratulate anniversaries. Comment on listings. Wish birthdays. No selling — just visibility.`
-    });
-  }
-  return tasks;
+function referralProducerNames(agentId){
+  const p = DB.producers.find(x=>x.id===agentId);
+  const pl = p ? p.name : 'Jason Allen';
+  return { pf: pl.split(' ')[0], pl };
 }
 
-// QUARTERLY EVENTS — coffee + business review each quarter
-const QUARTERLY_EVENTS = [
-  { month: 3,  type: '☕ Coffee',    priority: 'high',
-    text: (n,co) => `☕ Q1 Coffee/Lunch with ${n}${co?' ('+co+')':''} — Meeting should be about THEM. Ask: What's working? What's frustrating? How can I help? What marketing are you doing? Can I introduce you to anyone? Who would be a good strategic partner for you? The best referral partners create referrals for each other.` },
-  { month: 3,  type: '📋 Quarterly Review', priority: 'high',
-    text: (n,co) => `📋 Q1 Business Review with ${n}${co?' ('+co+')':''} — Instead of "any referrals?" say: "I've been thinking about how we can help you close more business this quarter." Brainstorm: first-time homebuyer seminar, home maintenance workshop, insurance Q&A, builder event, neighborhood appreciation event, client appreciation BBQ.` },
-  { month: 6,  type: '☕ Coffee',    priority: 'high',
-    text: (n,co) => `☕ Q2 Coffee/Lunch with ${n}${co?' ('+co+')':''} — Mid-year check-in. What's working? What needs to change? Share a client win. Discuss any co-marketing opportunities for Q3. Bring a small thank-you.` },
-  { month: 6,  type: '📋 Quarterly Review', priority: 'high',
-    text: (n,co) => `📋 Q2 Business Review with ${n}${co?' ('+co+')':''} — Review mutual referral activity mid-year. Propose a co-hosted event for Q3. Ask: "What would make me more valuable to your clients this fall?"` },
-  { month: 9,  type: '☕ Coffee',    priority: 'high',
-    text: (n,co) => `☕ Q3 Coffee/Lunch with ${n}${co?' ('+co+')':''} — Pre-fall check-in. Discuss Q4 goals and end-of-year events. Invite them to a client appreciation event. Bring a snack or small gift.` },
-  { month: 9,  type: '📋 Quarterly Review', priority: 'high',
-    text: (n,co) => `📋 Q3 Business Review with ${n}${co?' ('+co+')':''} — Plan Q4 together. Holiday pie giveaway? Year-end client event? First-time buyer workshop in January? Become part of their marketing plan for the year-end push.` },
-  { month: 12, type: '📅 Annual Planning', priority: 'high',
-    text: (n,co) => `📅 Annual Planning Breakfast with ${n}${co?' ('+co+')':''} — Every January. Meet for breakfast. Discuss: goals, production targets, marketing ideas, co-host opportunities, lead generation strategies. This changes the relationship from vendor to business partner.` },
-];
-
-// SURPRISE & DELIGHT CALENDAR — seasonal gifts throughout the year
-const SURPRISE_DELIGHT = [
-  { month: 2,  type: '🎁 Gift', priority: 'medium',
-    text: (n,co) => `💌 February Surprise & Delight — Send ${n}${co?' ('+co+')':''} a coffee gift card with a personal handwritten note. Small, unexpected, memorable.` },
-  { month: 4,  type: '🎁 Gift', priority: 'medium',
-    text: (n,co) => `⛳ April Surprise & Delight — Send ${n}${co?' ('+co+')':''} a Masters-themed gift (golf balls, tees, or snack kit). Great conversation starter.` },
-  { month: 7,  type: '🎁 Gift', priority: 'medium',
-    text: (n,co) => `🇺🇸 July Surprise & Delight — Send ${n}${co?' ('+co+')':''} a patriotic treat box or summer snack kit. Festive, fun, and personal.` },
-  { month: 9,  type: '🎁 Gift', priority: 'medium',
-    text: (n,co) => `🏈 September Surprise & Delight — Send ${n}${co?' ('+co+')':''} a football season snack box. Reference their favorite team if you know it!` },
-  { month: 11, type: '🎁 Gift', priority: 'high',
-    text: (n,co) => `🥧 November Surprise & Delight — Deliver or send a Thanksgiving pie to ${n}${co?' ('+co+')':''}. One of the highest-impact, lowest-cost touches of the year.` },
-  { month: 12, type: '🎁 Gift', priority: 'high',
-    text: (n,co) => `🎄 December Surprise & Delight — Handwritten Christmas card + small local gift to ${n}${co?' ('+co+')':''}. Handwritten always wins. Reference something personal from the year.` },
-];
-
-async function createReferralPartnerSequence(partnerId, partnerData) {
+async function createReferralPartnerCadence(partnerId, partnerData, cycle, anchorDate) {
   const name = partnerData.name;
-  const co = partnerData.company || '';
-  const today = new Date();
-  let taskCount = 0;
-
-  // 45-Day prospecting sequence (9 tasks) — written one at a time (small batch)
-  for (const t of REFERRAL_PROSPECT_SEQUENCE) {
-    const due = new Date(today);
-    due.setDate(today.getDate() + t.day);
-    await db.collection('tasks').add({
-      text: t.text(name, co),
+  const firstName = name.split(' ')[0];
+  const anchorStr = anchorDate.toISOString().slice(0, 10);
+  const batch = db.batch();
+  for (const t of REFERRAL_90DAY_CADENCE) {
+    const due = new Date(anchorDate);
+    due.setDate(due.getDate() + 5 + (t.week - 1) * 7);
+    batch.set(db.collection('tasks').doc(), {
+      text: `${t.channel==='email'?'📧':t.channel==='call'?'📞':'💬'} ${t.label} — ${firstName}${partnerData.company?' ('+partnerData.company+')':''}`,
       due: due.toISOString().slice(0, 10),
       priority: t.priority,
-      agentId: '',
+      agentId: partnerData.agentId || '',
       done: false,
       partnerId,
       partnerName: name,
-      touchpointType: t.type,
-      type: 'referral-partner-sequence',
-      sequenceDay: t.day,
-      sequenceMonth: null,
-      sequenceLabel: t.label,
-      isProspecting: true,
+      touchpointType: t.channel,
+      type: 'referral-partner-cadence',
+      week: t.week,
+      cycle,
+      cadenceAnchor: anchorStr,
+      autoSend: t.channel === 'email',
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    taskCount++;
   }
-
-  // Weekly touchpoints — 4/month for 12 months (48 tasks) — use batches of 20
-  const weeklyTasks = buildWeeklySequence(name, co);
-  for (let i = 0; i < weeklyTasks.length; i += 20) {
-    const batch = db.batch();
-    for (const t of weeklyTasks.slice(i, i + 20)) {
-      const due = new Date(today);
-      due.setDate(today.getDate() + 45 + (t.weekNum * 7));
-      batch.set(db.collection('tasks').doc(), {
-        text: t.text,
-        due: due.toISOString().slice(0, 10),
-        priority: t.priority,
-        agentId: '',
-        done: false,
-        partnerId,
-        partnerName: name,
-        touchpointType: t.type,
-        type: 'referral-partner-sequence',
-        sequenceMonth: t.month,
-        sequenceWeek: t.weekInMonth,
-        isWeeklyTouch: true,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      taskCount++;
-    }
-    await batch.commit();
-  }
-
-  // Quarterly events (7 tasks)
-  const qBatch = db.batch();
-  for (const t of QUARTERLY_EVENTS) {
-    const due = new Date(today);
-    due.setDate(today.getDate() + 45);
-    due.setMonth(due.getMonth() + t.month);
-    qBatch.set(db.collection('tasks').doc(), {
-      text: t.text(name, co),
-      due: due.toISOString().slice(0, 10),
-      priority: t.priority,
-      agentId: '',
-      done: false,
-      partnerId,
-      partnerName: name,
-      touchpointType: t.type,
-      type: 'referral-partner-sequence',
-      sequenceMonth: t.month,
-      isQuarterly: true,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    taskCount++;
-  }
-  await qBatch.commit();
-
-  // Surprise & Delight (6 tasks)
-  const sdBatch = db.batch();
-  for (const t of SURPRISE_DELIGHT) {
-    const due = new Date(today);
-    due.setMonth(today.getMonth() + t.month);
-    sdBatch.set(db.collection('tasks').doc(), {
-      text: t.text(name, co),
-      due: due.toISOString().slice(0, 10),
-      priority: t.priority,
-      agentId: '',
-      done: false,
-      partnerId,
-      partnerName: name,
-      touchpointType: t.type,
-      type: 'referral-partner-sequence',
-      sequenceMonth: t.month,
-      isSurpriseDelight: true,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    taskCount++;
-  }
-  await sdBatch.commit();
-
-  logActivity('🤝','#dbeafe',`Full relationship sequence (${taskCount} tasks) created for referral partner <b>${name}</b>`);
+  await batch.commit();
+  logActivity('🤝','#dbeafe',`90-Day Contact Cadence (cycle ${cycle}, 12 tasks) created for referral partner <b>${name}</b>`);
 }
 
 // REFERRAL THANK-YOU SEQUENCE — triggered when a referral log is added
@@ -5256,8 +5129,5 @@ window.onerror = function(msg,src,line,col,err){
   dbg('❌ ERROR: ' + msg + ' (line ' + line + ')');
 };
 </script>
-
-
-    <button class="btn btn-ghost btn-sm" style="color:#8b5cf6" onclick="showReferralScripts(&#39;${p.name}&#39;)">📋 Scripts</button>
 
 </body></html>

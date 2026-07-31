@@ -62,6 +62,7 @@ const TYPE_LABELS = {
   'quoted-followup':          'Quoted Follow-Up',
   'permits-followup':         'Permits Follow-Up',
   'remarketing-touchpoint':   'Remarketing',
+  'referral-partner-cadence': 'Referral Partner',
   'referral-partner-sequence':'Referral Partner',
   'referral-thankyou':        'Referral Thank-You',
 };
