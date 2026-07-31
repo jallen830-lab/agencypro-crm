@@ -4855,6 +4855,7 @@ function referralPartnerForm(d){
       <input type="checkbox" id="rp-sequence" checked style="margin-top:3px;flex-shrink:0">
       <label for="rp-sequence" style="font-size:12px;color:#166534;cursor:pointer">
         <strong>Create 90-Day Contact Cadence</strong> — 12 weekly touchpoints (text/call/email, repeating every 90 days). First touch due 5 days from today. Emails send automatically; calls and texts appear as tasks for the assigned producer.
+        <div style="color:#166534;opacity:.75;margin-top:2px">Only applies to Realtor / Mortgage Lender partners — other partner types (e.g. roofers) need a separate cadence.</div>
       </label>
     </div>` : ''}
     <div class="modal-actions">
@@ -4891,11 +4892,14 @@ async function saveReferralPartner(id){
     toast('Partner updated'); closeModal();
   } else {
     const createSequence = document.getElementById('rp-sequence')?.checked !== false;
+    const cadenceEligible = ['Realtor','Mortgage Lender'].includes(data.type);
     const ref = await db.collection('referralPartners').add(data);
     logActivity('🤝','#dbeafe',`New referral partner added: <b>${name}</b>`);
-    if(createSequence){
+    if(createSequence && cadenceEligible){
       await createReferralPartnerCadence(ref.id, data, 1, new Date());
       toast('Partner added! 90-Day Contact Cadence created (12 tasks) ✅');
+    } else if(createSequence && !cadenceEligible){
+      toast(`Partner added — 90-Day Cadence only applies to Realtors/Mortgage Lenders (this is ${data.type||'Other'})`);
     } else {
       toast('Partner added!');
     }
