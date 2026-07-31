@@ -99,10 +99,10 @@ ${AGENCY_PHONE}`;
     ${task.leadName ? `<div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Lead</div><div style="margin-bottom:12px">${task.leadName}</div>` : ''}
     <div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Task</div>
     <div style="margin-bottom:12px">${task.text}</div>
-    <div style="display:flex;gap:24px">
-      <div><div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Due</div><div>${fmtDate(task.due)}</div></div>
-      <div><div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Priority</div><div style="text-transform:capitalize">${task.priority || 'medium'}</div></div>
-    </div>
+    <table style="border-collapse:collapse"><tr>
+      <td style="padding-right:32px;vertical-align:top"><div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Due</div><div>${fmtDate(task.due)}</div></td>
+      <td style="vertical-align:top"><div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Priority</div><div style="text-transform:capitalize">${task.priority || 'medium'}</div></td>
+    </tr></table>
   </div>
 </div></body></html>`;
 
