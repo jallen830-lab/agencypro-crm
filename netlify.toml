@@ -1,0 +1,14 @@
+[build]
+  functions = "netlify/functions"
+
+[build.environment]
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyBlo5vw62iKEAdqcg3xEY7TwvdPze10VcM"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[plugins]]
+  package = "@netlify/plugin-functions-install-core"
+
+[functions."daily-kpi-report"]
+  schedule = "0 23 * * *"
