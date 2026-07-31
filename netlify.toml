@@ -15,3 +15,6 @@
 
 [functions."send-quoted-followup-emails"]
   schedule = "0 15 * * *"
+
+[functions."send-daily-task-digest"]
+  schedule = "0 13 * * *"
