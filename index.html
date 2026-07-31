@@ -280,6 +280,7 @@ select.form-input{cursor:pointer}
       <div class="nav-item" data-view="referrals">🤝 Referral Partners</div>
       <div class="nav-item" data-view="remarketing">📣 Remarketing</div>
       <div class="nav-item" data-view="renewals">📅 Renewals</div>
+      <div class="nav-item" data-view="library">📚 Library</div>
       <div class="nav-section">Team</div>
       <div class="nav-item" data-view="scoreboard">🏆 Scoreboard</div>
       <div class="nav-item" data-view="tasks">✅ Tasks <span class="nav-badge" id="task-badge" style="display: inline;">69</span></div>
@@ -727,6 +728,12 @@ select.form-input{cursor:pointer}
           <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="openModal(&#39;renewal&#39;)">+ Add Renewal</button>
         </div>
         <div class="card" id="renewals-content"></div>
+      </div>
+
+      <!-- LIBRARY -->
+      <div class="view" id="view-library">
+        <div style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:14px">Browsable call/text/email playbooks for prospecting and follow-up workflows. Open a workflow, pick the script for the right day, and copy it — nothing here sends automatically or creates tasks.</div>
+        <div id="library-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
       </div>
 
       <!-- SCOREBOARD -->
@@ -2270,7 +2277,7 @@ function renderKPITable(producers, byProducer, allRows, showSummaryOnly=false){
 
 // ─────────────────────────────────────────────────────────────────────
 
-const TITLES={dashboard:'Dashboard',leads:'Leads',pipeline:'Pipeline',customers:'Customers',crosssell:'Cross-Sell Pipeline',referrals:'Referral Partners',remarketing:'Remarketing',renewals:'Renewals',scoreboard:'Scoreboard',tasks:'Tasks',reports:'Reports',kpis:'KPIs'};
+const TITLES={dashboard:'Dashboard',leads:'Leads',pipeline:'Pipeline',customers:'Customers',crosssell:'Cross-Sell Pipeline',referrals:'Referral Partners',remarketing:'Remarketing',renewals:'Renewals',library:'Library',scoreboard:'Scoreboard',tasks:'Tasks',reports:'Reports',kpis:'KPIs'};
 let currentView='dashboard';
 document.querySelectorAll('.nav-item').forEach(el=>el.addEventListener('click',()=>{ if(el.dataset.view) showView(el.dataset.view); }));
 function showView(v){
@@ -2284,7 +2291,7 @@ function showView(v){
   document.getElementById('view-'+v).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===v));
   document.getElementById('page-title').textContent=TITLES[v]||v;
-  const renders={dashboard:renderDashboard,leads:renderLeads,pipeline:renderPipeline,customers:renderCustomers,crosssell:renderCrossSell,referrals:renderReferrals,remarketing:renderRemarketing,renewals:renderRenewals,scoreboard:renderScoreboard,tasks:renderTasks,reports:renderReports,kpis:renderKPIs};
+  const renders={dashboard:renderDashboard,leads:renderLeads,pipeline:renderPipeline,customers:renderCustomers,crosssell:renderCrossSell,referrals:renderReferrals,remarketing:renderRemarketing,renewals:renderRenewals,library:renderLibrary,scoreboard:renderScoreboard,tasks:renderTasks,reports:renderReports,kpis:renderKPIs};
   if(renders[v]) renders[v]();
   // Retry after data arrives — Firestore can be slow on first load
   const retryMap = {
@@ -2975,6 +2982,129 @@ async function deleteProducer(id){
   logActivity('🗑','#fee2e2',`Producer <b>${p.name}</b> removed from system`);
   toast(`${p.name} removed`);
 }
+
+// ── SALES WORKFLOW LIBRARY ────────────────────────────────────────────
+// Static, browsable call/text/email playbooks. Nothing here creates tasks
+// or auto-sends — producers open a workflow and copy whatever script fits
+// the day they're on. Add new playbooks here as they're written.
+const WORKFLOW_LIBRARY = [
+  {
+    id: 'haines-property-connect',
+    name: 'Haines Property Connect — Follow-Up Playbook',
+    description: 'A copy-and-paste guide for calls, texts, and emails to Haines Property Connect leads. Stop the sequence when the prospect engages.',
+    bestPractices: [
+      'Vary call times.',
+      'Stop the sequence when they respond.',
+      'Capture the renewal month.',
+      'Enter engaged prospects into the CRM.',
+      'Schedule follow-up 60 days before renewal.',
+    ],
+    steps: [
+      { day: 'Day 1', title: 'Initial Contact', objective: 'Introduce yourself and earn permission for a future review.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO\nHi, is this [Name]? This is [Agent] with Allen Insurance Agency in Colleyville.\n\nWHY\nThe reason for my call is we work with homeowners in your neighborhood and I wanted to introduce myself as a local insurance resource.\n\nWHAT\nI'm not asking you to change today. When your homeowners insurance renews, would you be open to a quick 10-minute review to see if we can improve your coverage, premium, or both?\n\nConversation prompts:\n- Who currently handles your insurance?\n- About what month does it renew?\n- When was the last time you reviewed it?` },
+          { type: 'text', label: 'Text Message', content: `Hi [Name], this is [Agent] with Allen Insurance Agency in Colleyville. We work with several homeowners in your neighborhood and wanted to introduce ourselves. If you ever want a second opinion on your insurance, I'm always happy to help.` },
+          { type: 'email', label: 'Email', subject: 'Your Local Insurance Resource', content: `Hi [Name],\n\nMy name is [Agent] with Allen Insurance Agency. I simply wanted to introduce myself as a local insurance resource.\n\nIf you'd ever like a complimentary review before your next renewal, I'd be happy to compare your current coverage and answer any questions. There is never any obligation.\n\nThank you,\n[Agent]` },
+        ] },
+      { day: 'Day 3', title: 'Follow-Up Call', objective: 'Determine renewal timing.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: I wanted to follow up on my earlier message.\n\nWHAT: I was hoping to find out when your homeowners policy renews. If it's coming up soon, I'd be happy to prepare a comparison before you make your renewal decision.` },
+        ] },
+      { day: 'Day 5', title: 'Educational Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'Three Questions Every Homeowner Should Ask', content: `Hi [Name],\n\nBefore your next renewal, ask yourself:\n• Is my home insured to today's rebuilding cost?\n• Do I have enough liability protection?\n• Am I receiving every available discount?\n\nIf you'd like a complimentary review, simply reply to this email.\n\n[Agent]` },
+        ] },
+      { day: 'Day 7', title: 'Renewal Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Quick question...about what month does your homeowners insurance renew? If it's coming up in the next couple of months, I'd be happy to prepare a comparison so you have options before you renew.` },
+        ] },
+      { day: 'Day 10', title: 'Discovery Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: Many homeowners don't realize how much coverage options change over time.\n\nWHAT: I'd love to review your current policy before renewal so you know exactly what you're paying for and whether there are opportunities to improve your protection.` },
+        ] },
+      { day: 'Day 14', title: 'Roof Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'Has Your Roof Been Replaced Recently?', content: `Hi [Name],\n\nA newer roof can sometimes qualify for better insurance pricing and improved coverage options.\n\nIf you've replaced your roof recently, I'd be happy to review your policy and make sure you're receiving every available benefit.\n\n[Agent]` },
+        ] },
+      { day: 'Day 18', title: 'Social Proof Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `We recently helped another homeowner nearby review their coverage and improve protection without increasing premium. If you'd ever like a second opinion, I'd be happy to help.` },
+        ] },
+      { day: 'Day 21', title: 'Permission Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: I wanted to make one final attempt to connect.\n\nWHAT: If now isn't the right time, would it be alright if I reached out about 60 days before your renewal?` },
+        ] },
+      { day: 'Day 28', title: 'Home Inventory Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'One Simple Way to Make a Future Claim Easier', content: `Hi [Name],\n\nTake a few minutes to walk through your home with your phone and record each room. A simple home inventory can make a future claim much easier.\n\nIf you'd like a free checklist, just reply.\n\n[Agent]` },
+        ] },
+      { day: 'Day 35', title: 'Permission Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Hope you're having a great week. If your renewal is later this year, I'm happy to make a note and reach out closer to that date instead of bothering you now. Just let me know the month.` },
+        ] },
+      { day: 'Day 45', title: 'Final Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: I wanted to close the loop on my previous messages.\n\nWHAT: I'll close my file for now, but if you'd ever like a complimentary insurance review, we'd love the opportunity to earn your business. Thanks and have a wonderful day!` },
+        ] },
+    ],
+  },
+];
+const WORKFLOW_TYPE_ICONS = { call: '📞', text: '💬', email: '📧' };
+
+function renderLibrary(){
+  const el = document.getElementById('library-list');
+  if(!el) return;
+  if(!WORKFLOW_LIBRARY.length){
+    el.innerHTML = '<div class="empty-state" style="padding:24px">No workflows yet.</div>';
+    return;
+  }
+  el.innerHTML = WORKFLOW_LIBRARY.map(w=>{
+    const touchCount = w.steps.reduce((s,step)=>s+step.items.length,0);
+    return `<div class="card" style="margin:0">
+      <div style="font-size:14px;font-weight:700;color:var(--navy);margin-bottom:6px">📖 ${w.name}</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px">${w.description}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${w.steps.length} touchpoint days &bull; ${touchCount} scripts</div>
+      <button class="btn btn-primary btn-sm" onclick="showWorkflow('${w.id}')">Open Workflow</button>
+    </div>`;
+  }).join('');
+}
+
+function showWorkflow(workflowId){
+  const w = WORKFLOW_LIBRARY.find(x=>x.id===workflowId);
+  if(!w) return;
+  const bestPracticesHtml = w.bestPractices?.length ? `
+    <div style="background:#f0fdf4;border-radius:8px;padding:12px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Producer Best Practices</div>
+      <ul style="margin:0;padding-left:18px;font-size:12px;color:#166534;line-height:1.7">
+        ${w.bestPractices.map(b=>`<li>${b}</li>`).join('')}
+      </ul>
+    </div>` : '';
+  const html = `<div class="modal-title">📖 ${w.name}</div>
+    <div style="max-height:65vh;overflow-y:auto;padding-right:4px">
+      ${bestPracticesHtml}
+      ${w.steps.map(step=>`
+        <div style="margin-bottom:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">${step.day} — ${step.title}${step.objective?`<span style="font-weight:400;color:var(--muted)"> — ${step.objective}</span>`:''}</div>
+          ${step.items.map(item=>{
+            const content = (item.type==='email' && item.subject) ? `SUBJECT: ${item.subject}\n\n${item.content}` : item.content;
+            return `<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+              <div style="background:#f8fafc;padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)">
+                <span>${WORKFLOW_TYPE_ICONS[item.type]||'📋'}</span><span>${item.label}</span>
+                <button onclick="navigator.clipboard.writeText(this.closest('.script-block').querySelector('pre').textContent).then(()=>toast('Copied!'))"
+                  style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted)">Copy</button>
+              </div>
+              <div class="script-block" style="padding:10px 12px">
+                <pre style="margin:0;font-family:inherit;font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.6">${content}</pre>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`).join('')}
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('modal-content').innerHTML = html;
+}
+// ─────────────────────────────────────────────────────────────────────
 
 // ── TASKS ──
 function renderTasks(){
