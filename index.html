@@ -3391,8 +3391,10 @@ const QUOTED_FOLLOWUP_TEMPLATES = [
   { daysOut: 0,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 0 — Call ${name} to deliver the ${line} quote. Walk through coverage, answer questions, attempt to close.` },
   { daysOut: 1,  priority: 'high',   taskType: 'text',  text: (name, line) => `💬 Day 1 — Text ${name}: confirm the ${line} quote arrived, invite questions, keep it brief and friendly.` },
   { daysOut: 3,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 3 — Call ${name} to follow up on the ${line} quote. Did they review it? Walk highlights, handle objections, close attempt.` },
+  { daysOut: 3,  priority: 'medium', taskType: 'email', autoSend: true, text: (name, line) => `📧 Day 3 — Value email auto-sent to ${name} (sent automatically at 9am Central)` },
   { daysOut: 7,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 7 — Call ${name} for a decision check-in on the ${line} quote. Address competing quotes, pricing concerns, create urgency.` },
   { daysOut: 10, priority: 'medium', taskType: 'call',  text: (name, line) => `📞 Day 10 — Final push call with ${name} on the ${line} quote. Respectful, no-pressure, last close attempt.` },
+  { daysOut: 10, priority: 'medium', taskType: 'email', autoSend: true, text: (name, line) => `📧 Day 10 — Last-attempt email auto-sent to ${name} (sent automatically at 9am Central)` },
   { daysOut: 14, priority: 'low',    taskType: 'text',  text: (name, line) => `💬 Day 14 — Final text to ${name} re: ${line} quote. Thank them either way, leave the door open, close the loop.` },
 ];
 
@@ -3448,31 +3450,24 @@ IF VOICEMAIL:
 "Hi [Name], [Agent] here at Allen Insurance Agency. Just following up on your [line] quote — would love to answer any questions you might have. Give me a ring at [number], I'm here to help!"`
   },
   day3email: {
-    label: 'Day 3 — Value Email',
-    type: '📧 Email',
+    label: 'Day 3 — Value Email (auto-sent 9am Central, do not manually send)',
+    type: '📧 Email — Automatic',
     color: '#3b82f6',
-    content: `SUBJECT: Your [Line] Insurance Quote — Quick Question
+    content: `SUBJECT: Following Up on Your Insurance Quote
 
 Hi [Name],
 
-I wanted to follow up on the quote I sent over for your [line] insurance.
+I wanted to follow up and make sure you received the insurance quote we put together for you.
 
-A few things I want to make sure are clear:
-
-✅ What your coverage includes — [briefly list 2-3 key highlights]
-✅ How the premium breaks down — $[amount] per [month/year]
-✅ What to do next — it takes less than 10 minutes to get started
-
-If you have any questions — even small ones — please don't hesitate to reach out. I'm happy to hop on a quick call or answer by text.
-
-And if you've already decided this isn't the right fit, just let me know and I'll stop following up. No hard feelings at all.
+If you have any questions at all, I'm happy to help — just reply to this email or give us a call.
 
 Looking forward to hearing from you!
 
 [Agent Name]
 Allen Insurance Agency
-[Phone Number]
-[Email]`
+(817) 345-0155
+
+— This email is sent automatically 3 days after a quote is entered. It does not need to be sent manually.`
   },
   day7: {
     label: 'Day 7 — Decision Follow-Up Call',
@@ -3526,31 +3521,24 @@ IF VOICEMAIL:
 "Hi [Name], [Agent] here from Allen Insurance — this will be my last follow-up call on your quote so I don't want to keep filling up your voicemail. If you're still interested, I'd love to hear from you at [number]. If not, no worries at all — I hope to earn your business someday down the road!"`
   },
   day10email: {
-    label: 'Day 10 — Last Attempt Email',
-    type: '📧 Email',
+    label: 'Day 10 — Last Attempt Email (auto-sent 9am Central, do not manually send)',
+    type: '📧 Email — Automatic',
     color: '#3b82f6',
-    content: `SUBJECT: Still Here If You Need Me — [Line] Quote
+    content: `SUBJECT: Still Here If You Need Us
 
 Hi [Name],
 
-I've reached out a few times about your [line] insurance quote and I don't want to be a bother — so I'll keep this short.
+I don't want to keep bothering you, so this will be my last check-in on your insurance quote for now.
 
-If you're still weighing your options, I'm happy to help in any way I can:
+If you're still interested or have any questions, I'm happy to help — just reply to this email or give us a call anytime.
 
-📞 Quick call to talk through the coverage
-📋 Adjust the quote to fit your budget better
-❓ Answer any questions you haven't asked yet
-
-If you've decided to go in a different direction, no hard feelings — I completely understand. Just reply and let me know and I'll stop following up.
-
-Either way, I hope you end up with great coverage that protects what matters most to you.
-
-Thank you for giving us the opportunity.
+Either way, thanks for considering Allen Insurance Agency!
 
 [Agent Name]
 Allen Insurance Agency
-[Phone Number]
-[Email]`
+(817) 345-0155
+
+— This email is sent automatically 10 days after a quote is entered. It does not need to be sent manually.`
   },
   day14: {
     label: 'Day 14 — Final Text / Close Loop',
@@ -3604,6 +3592,7 @@ async function createQuotedFollowUpTasks(leadId, leadData){
       line: line || '',
       sequenceDay: t.daysOut,
       taskType: t.taskType,
+      autoSend: t.autoSend || false,
       type: 'quoted-followup',
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
@@ -3612,7 +3601,7 @@ async function createQuotedFollowUpTasks(leadId, leadData){
     await db.collection('tasks').add(task);
   }
   logActivity('🎯','#dbeafe',`Quoted follow-up tasks created for <b>${name}</b>`);
-  toast('✅ 6 follow-up tasks created for quoted lead!');
+  toast(`✅ ${tasks.length} follow-up tasks created for quoted lead!`);
 }
 
 // ── PERMITS LEAD — F.2 CLOSE & RETAIN CADENCE ─────────────────────────
@@ -4068,6 +4057,7 @@ function producerForm(d){
     </div>
     <div class="form-row"><div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="p-nm" value="${ed?d.name:''}" placeholder="Full name"></div>
     <div class="form-group"><label class="form-label">Role</label><input class="form-input" id="p-rl" value="${ed?d.role:'Producer'}" placeholder="e.g. Sr. Producer"></div></div>
+    <div class="form-group"><label class="form-label">Email (used to send automated follow-up emails)</label><input class="form-input" id="p-em" type="email" value="${ed?d.email||'':''}" placeholder="jason@youragentonthego.com"></div>
     <div class="form-group"><label class="form-label">Monthly Premium Goal ($)</label><input class="form-input" id="p-gl" type="number" value="${ed?d.goal:30000}" placeholder="30000"></div>
     <div class="form-group"><label class="form-label">Color</label>
       <div style="display:flex;gap:8px;margin-top:4px">${colors.map(c=>`<div onclick="selectColor('${c}')" data-color="${c}" style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${ed&&d.color===c?'#1e293b':'transparent'}"></div>`).join('')}</div>
@@ -4078,7 +4068,7 @@ function producerForm(d){
 function selectColor(c){ document.getElementById('p-cl').value=c; document.querySelectorAll('[data-color]').forEach(el=>el.style.border=`3px solid ${el.dataset.color===c?'#1e293b':'transparent'}`); }
 async function saveProducer(id){
   const name=document.getElementById('p-nm').value.trim();if(!name){alert('Name required');return;}
-  const data={name,role:document.getElementById('p-rl').value.trim(),goal:Number(document.getElementById('p-gl').value)||30000,color:document.getElementById('p-cl').value};
+  const data={name,role:document.getElementById('p-rl').value.trim(),email:document.getElementById('p-em').value.trim(),goal:Number(document.getElementById('p-gl').value)||30000,color:document.getElementById('p-cl').value};
   if(id) await db.collection('producers').doc(id).update(data);
   else { data.order=DB.producers.length+1; await db.collection('producers').add(data); }
   toast(id?'Producer updated':'Producer added'); closeModal();
