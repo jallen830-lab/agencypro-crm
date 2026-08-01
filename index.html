@@ -1560,7 +1560,7 @@ function buildPolicyRow(p, i){
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Line of Business</label>
-        <select class="form-input pr-line" onchange="onPolicyLineChange(this)">${['Auto','Home','Life','Commercial','Bundle','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${(p.line||'Auto')===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input pr-line" onchange="onPolicyLineChange(this)">${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${(p.line||'Auto')===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Annual Premium ($)</label>
         <input class="form-input pr-premium" type="number" value="${p.premium||''}">
@@ -3456,7 +3456,7 @@ function buildQuoteRow(q, i){
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Line of Business</label>
-        <select class="form-input qr-line">${['Auto','Home','Life','Commercial','Bundle','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${q.line===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input qr-line">${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${q.line===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Carrier</label>
         <input class="form-input qr-carrier" value="${q.carrier||''}" placeholder="e.g. State Farm">
@@ -4455,7 +4455,7 @@ function buildEcPolicyRow(p, i){
     <div class="form-row">
       <div class="form-group"><label class="form-label">Line of Business</label>
         <select class="form-input ec-line" onchange="calcEcRowRenewal(this.closest('.quote-row').querySelector('.ec-eff'),${i})">
-          ${['Auto','Home','Life','Commercial','Bundle','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${(p.line||'Auto')===x?' selected':''}>${x}</option>`).join('')}
+          ${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${(p.line||'Auto')===x?' selected':''}>${x}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Carrier *</label>
@@ -4675,7 +4675,7 @@ function crossSellForm(d){
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Cross-Sell Line *</label>
-        <select class="form-input" id="cs-line">${['Auto','Home','Life','Commercial','Bundle','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${ed&&d.line===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="cs-line">${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${ed&&d.line===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Carrier</label>
         <input class="form-input" id="cs-carrier" value="${ed?d.carrier||'':''}" placeholder="e.g. State Farm">
@@ -5383,7 +5383,7 @@ function referralLogForm(d){
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Line of Business</label>
-        <select class="form-input" id="rl-line">${['Auto','Home','Life','Commercial','Bundle','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${ed&&d.line===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="rl-line">${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${ed&&d.line===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Date Received</label>
         <input class="form-input" id="rl-date" type="date" value="${ed?d.date:today}">
