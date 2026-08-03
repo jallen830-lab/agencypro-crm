@@ -1452,11 +1452,13 @@ function renderCustomers(){
       <td style="white-space:nowrap">
         ${!isFormer ? `
           <button class="btn btn-primary btn-sm" onclick="openPolicyModal('${l.id}')">${policyCount>0?'✏️ Policies ('+policyCount+')':'+ Add Policy'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button>
           <button class="btn btn-ghost btn-sm" onclick="openCrossSellForCustomer('${l.id}')">🔀 Cross-Sell</button>
           <button class="btn btn-danger btn-sm" onclick="markCustomerLeft('${l.id}')">👋 Left</button>
           <button class="btn btn-danger btn-sm" onclick="deleteCustomerRecord('${l.id}')" title="Delete this file permanently">🗑</button>
         ` : `
           <button class="btn btn-primary btn-sm" onclick="moveToWinback('${l.id}')">🔁 Winback</button>
+          <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button>
           <button class="btn btn-ghost btn-sm" onclick="markCustomerActive('${l.id}')">↩ Reactivate</button>
           <button class="btn btn-danger btn-sm" onclick="deleteCustomerRecord('${l.id}')" title="Delete this file permanently">🗑</button>
         `}
