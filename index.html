@@ -3107,6 +3107,58 @@ const WORKFLOW_LIBRARY = [
         ] },
     ],
   },
+  {
+    id: 'cold-xdate',
+    name: 'Cold X-Date — Follow-Up Playbook',
+    description: 'For prospects whose renewal month is known but who have never spoken with Allen Insurance Agency. The goal is to earn permission to review their insurance before renewal — not to pressure them into switching.',
+    bestPractices: [
+      'Keep the tone educational and low-pressure.',
+      'Ask permission instead of assuming they want a quote.',
+      'Capture carrier, renewal date, and any life changes.',
+      'Move engaged prospects into your CRM and active quote workflow.',
+      "If they renew elsewhere, schedule a follow-up 10-11 months later.",
+    ],
+    steps: [
+      { day: '60 Days Before Renewal', title: 'First Contact', objective: 'Introduce yourself and learn whether they are open to a review.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO\nHi, is this [Name]? This is [Agent] with Allen Insurance Agency in Colleyville.\n\nWHY\nThe reason I'm calling is that I understand your homeowners insurance renews in about two months. I like reaching out before renewal so homeowners have time to review their options instead of making a last-minute decision.\n\nWHAT\nWould you be opposed to a quick 10-minute insurance review before your renewal to see if there are opportunities to improve your coverage, your premium, or both?\n\nQuestions:\n- Who is your current carrier?\n- Have you reviewed your policy in the last couple of years?\n- What's most important to you: price, coverage, or service?` },
+          { type: 'text', label: 'Text Message', content: `Hi [Name], this is [Agent] with Allen Insurance Agency. Your insurance renewal is coming up in the next couple of months. If you'd ever like a complimentary insurance review before you renew, just reply here.` },
+          { type: 'email', label: 'Email', subject: 'Before Your Insurance Renews...', content: `Hi [Name],\n\nI wanted to introduce myself before your upcoming insurance renewal.\n\nMany homeowners simply renew each year without checking whether their coverage still fits their needs or whether better options exist.\n\nIf you'd like a complimentary review before you renew, I'd be happy to help. There is never any obligation.\n\n[Agent]\nAllen Insurance Agency` },
+        ] },
+      { day: '45 Days Before Renewal', title: 'Follow-Up Call', objective: 'Follow up and identify interest.',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: I wanted to follow up because your renewal is getting closer.\n\nWHAT: If you're open to it, I'd be happy to compare your current policy with today's options so you can make an informed decision before renewing.` },
+        ] },
+      { day: '40 Days Before Renewal', title: 'Educational Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'Three Things Most Homeowners Never Review', content: `Hi [Name],\n\nBefore renewing your insurance, take a few minutes to review:\n- Replacement cost\n- Liability limits\n- Discounts you may qualify for\n\nEven if you stay with your current company, reviewing these items is worthwhile.\n\nIf you'd like a complimentary review, simply reply.\n\n[Agent]` },
+        ] },
+      { day: '30 Days Before Renewal', title: 'Text Reminder', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Hi [Name], your insurance renewal is about a month away. If you'd like to compare your options before you renew, I'd be happy to help. Just let me know.` },
+        ] },
+      { day: '21 Days Before Renewal', title: 'Discovery Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: Your renewal is only a few weeks away.\n\nWHAT: I'd love to give you a second opinion before you renew. Even if you stay where you are, you'll know you've made an informed decision.` },
+        ] },
+      { day: '14 Days Before Renewal', title: 'Coverage Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: "Don't Compare Premium Alone", content: `Hi [Name],\n\nPrice matters, but so do liability limits, replacement cost, water damage coverage, roof settlement, and claims service.\n\nI'd be happy to explain the differences and provide a complimentary comparison before your renewal.\n\n[Agent]` },
+        ] },
+      { day: '7 Days Before Renewal', title: 'Final Text', objective: '',
+        items: [
+          { type: 'text', label: 'Text Message', content: `Just a quick reminder that your insurance renewal is next week. If you'd still like a second opinion before renewing, there's still time. Reply anytime.` },
+        ] },
+      { day: '3 Days Before Renewal', title: 'Final Call', objective: '',
+        items: [
+          { type: 'call', label: 'Phone Script (Michael Weaver 3W)', content: `WHO: [Agent] with Allen Insurance Agency.\n\nWHY: I wanted to make one final attempt before your renewal.\n\nWHAT: If you'd still like a complimentary insurance review, we can usually prepare everything quickly. If not, I'll simply wish you the best.` },
+        ] },
+      { day: 'Renewal Day', title: 'Courtesy Email', objective: '',
+        items: [
+          { type: 'email', label: 'Email', subject: 'Best Wishes on Your Renewal', content: `Hi [Name],\n\nIf you've already renewed, I hope everything went smoothly.\n\nIf you ever decide you'd like a second opinion during the coming year, I'd be happy to help. We'd love the opportunity to earn your business when the timing is right.\n\n[Agent]` },
+        ] },
+    ],
+  },
 ];
 const WORKFLOW_TYPE_ICONS = { call: '📞', text: '💬', email: '📧' };
 
