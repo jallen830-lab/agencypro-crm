@@ -5113,7 +5113,7 @@ function referralPartnerForm(d){
     <div class="form-row">
       <div class="form-group"><label class="form-label">Partner Type</label>
         <select class="form-input" id="rp-type">
-          ${['Realtor','Mortgage Lender','Roofer','Financial Advisor','Auto Dealer','CPA / Accountant','Attorney','Builder','Title Company','Other'].map(x=>`<option${ed&&d.type===x?' selected':''}>${x}</option>`).join('')}
+          ${['Realtor','Commercial Realtor','Mortgage Lender','Business Banker','Roofer','Financial Advisor','Auto Dealer','CPA / Accountant','Attorney','Builder','Title Company','Other'].map(x=>`<option${ed&&d.type===x?' selected':''}>${x}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="rp-phone" type="tel" value="${ed?d.phone||'':''}" placeholder="(555) 000-0000"></div>
