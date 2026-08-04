@@ -3446,8 +3446,18 @@ function leadForm(d, defaultLeadType){
         <select class="form-input" id="l-lt" onchange="toggleCommercialFields()">${['Personal Lines','Winback','Quote Not Closed','Life Insurance','Commercial','Cross Sale'].map(x=>`<option${lt===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Lead Source</label>
-        <select class="form-input" id="l-src">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Permits'].map(x=>`<option${ed&&d.source===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Permits'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
       </div>
+    </div>
+    <div class="form-row" id="referral-partner-row" style="display:${(ed?d.source:'Referral')==='Referral'?'flex':'none'}">
+      <div class="form-group">
+        <label class="form-label">Referral Partner</label>
+        <select class="form-input" id="l-refpartner">
+          <option value="">— Select partner —</option>
+          ${DB.referralPartners.map(p=>`<option value="${p.id}"${ed&&d.referralPartnerId===p.id?' selected':''}>${p.name}${p.company?' — '+p.company:''}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"></div>
     </div>
 
     <!-- Commercial fields — shown only when Lead Type = Commercial -->
@@ -3500,6 +3510,13 @@ function toggleCommercialFields(){
   const lt = document.getElementById('l-lt')?.value;
   const cf = document.getElementById('commercial-fields');
   if(cf) cf.style.display = lt==='Commercial' ? 'block' : 'none';
+}
+
+// Show/hide the referral partner picker when lead source changes
+function toggleReferralPartnerField(){
+  const src = document.getElementById('l-src')?.value;
+  const row = document.getElementById('referral-partner-row');
+  if(row) row.style.display = src==='Referral' ? 'flex' : 'none';
 }
 
 function buildQuoteRow(q, i){
@@ -3575,6 +3592,9 @@ async function saveLead(id){
   const quotes = collectQuotes();
   const primary = quotes[0]||{};
   const totalPremium = quotes.reduce((s,q)=>s+q.premium,0);
+  const source = document.getElementById('l-src').value;
+  const refPartnerId = source==='Referral' ? (document.getElementById('l-refpartner')?.value||'') : '';
+  const refPartner = refPartnerId ? DB.referralPartners.find(p=>p.id===refPartnerId) : null;
   const data={
     firstName:fn, lastName:ln,
     email:document.getElementById('l-em').value.trim(),
@@ -3582,7 +3602,9 @@ async function saveLead(id){
     leadType:document.getElementById('l-lt').value,
     line: primary.line||'Auto',
     carrier: primary.carrier||'',
-    source:document.getElementById('l-src').value,
+    source,
+    referralPartnerId: refPartnerId,
+    referralPartnerName: refPartner?refPartner.name:'',
     agentId:document.getElementById('l-ag').value,
     status:document.getElementById('l-st').value,
     premium: totalPremium||Number(primary.premium)||0,
@@ -3594,7 +3616,8 @@ async function saveLead(id){
     businessType:  isCommercial ? (document.getElementById('l-biztype')?.value||'') : '',
     industry:      isCommercial ? (document.getElementById('l-industry')?.value.trim()||'') : '',
   };
-  const prevStatus = id ? DB.leads.find(l=>l.id===id)?.status : null;
+  const prevLead = id ? DB.leads.find(l=>l.id===id) : null;
+  const prevStatus = prevLead?.status||null;
   const isNowClosed = data.status==='Closed Won' && prevStatus!=='Closed Won';
   const isNowQuoted = data.status==='Quoted' && prevStatus!=='Quoted';
   const isLeavingQuoted = prevStatus==='Quoted' && ['Closed Won','Closed Lost','Quote Not Closed'].includes(data.status);
@@ -3617,7 +3640,36 @@ async function saveLead(id){
   if(isLeavingQuoted && savedId){
     await cancelQuotedFollowUpTasks(savedId, data.status);
   }
+
+  // First time this lead is linked to a referral partner, log it in that
+  // partner's Referral Log too (skip on later edits — already tracked).
+  if(data.referralPartnerId && savedId && !(prevLead && prevLead.referralLogId)){
+    await logReferralFromLead(savedId, data);
+  }
   closeModal();
+}
+
+// Mirrors the "Log a Referral" flow (saveReferralLog) so a lead marked Referral
+// with a partner selected automatically shows up in that partner's Referral Log.
+async function logReferralFromLead(leadId, data){
+  const partner = DB.referralPartners.find(p=>p.id===data.referralPartnerId);
+  if(!partner) return;
+  const clientName = `${data.firstName} ${data.lastName}`.trim();
+  const logData = {
+    partnerId: partner.id, partnerName: partner.name,
+    clientName, clientPhone: data.phone||'',
+    line: data.line||'Auto',
+    date: data.date || new Date().toISOString().slice(0,10),
+    status: 'New',
+    premium: 0,
+    notes: 'Auto-logged from lead intake',
+    leadId,
+  };
+  const ref = await db.collection('referralLogs').add(logData);
+  await db.collection('leads').doc(leadId).update({ referralLogId: ref.id });
+  await db.collection('referralPartners').doc(partner.id).update({ lastContact: logData.date });
+  logActivity('🤝','#dbeafe',`Referral logged: <b>${clientName}</b> from ${partner.name} (from lead intake)`);
+  await createReferralThankYouSequence(partner.id, partner.name, clientName);
 }
 
 function taskForm(d){
