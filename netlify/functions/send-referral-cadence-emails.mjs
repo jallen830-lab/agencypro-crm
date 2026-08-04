@@ -4,10 +4,11 @@
  *
  * Sends the Week 3/6/9/12 emails from whichever 90-day cadence applies to
  * the partner's type — REFERRAL_REALTOR_CADENCE (Realtor/Mortgage Lender),
- * REFERRAL_ROOFER_CADENCE (Roofer), or REFERRAL_BUSINESS_BANKER_CADENCE
- * (Business Banker) in index.html, content mirrored here as
- * REALTOR_CADENCE/ROOFER_CADENCE/BUSINESS_BANKER_CADENCE keyed by each
- * task's cadenceType field.
+ * REFERRAL_ROOFER_CADENCE (Roofer), REFERRAL_BUSINESS_BANKER_CADENCE
+ * (Business Banker), or REFERRAL_COMMERCIAL_REALTOR_CADENCE (Commercial
+ * Realtor) in index.html, content mirrored here as REALTOR_CADENCE/
+ * ROOFER_CADENCE/BUSINESS_BANKER_CADENCE/COMMERCIAL_REALTOR_CADENCE keyed
+ * by each task's cadenceType field.
  * Sends from the assigned producer's own mailbox on the verified
  * youragentonthego.com domain. When the Week 12 (appreciation) email
  * sends, this also creates the next cycle's 12 tasks (same cadenceType)
@@ -166,7 +167,30 @@ const BUSINESS_BANKER_CADENCE = [
     body: (fn, pl) => `Hi ${fn},\n\nThank you for your continued partnership. We appreciate the trust you place in Allen Insurance Agency and look forward to helping your clients.\n\n${pl}\nAllen Insurance Agency` },
 ];
 
-const CADENCES = { realtor: REALTOR_CADENCE, roofer: ROOFER_CADENCE, businessBanker: BUSINESS_BANKER_CADENCE };
+const COMMERCIAL_REALTOR_CADENCE = [
+  { week: 1,  channel: 'text' },
+  { week: 2,  channel: 'call' },
+  { week: 3,  channel: 'email',
+    subject: 'Insurance Can Prevent Closing Delays',
+    body: (fn, pl) => `Hi ${fn},\n\nOne of the easiest ways to keep a commercial transaction on track is to review insurance requirements early. We can help buyers understand property, liability, vacant building, builder's risk, and lender insurance requirements before closing.\n\nFeel free to send us a property address anytime.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 4,  channel: 'text' },
+  { week: 5,  channel: 'call' },
+  { week: 6,  channel: 'email',
+    subject: 'Common Commercial Insurance Gaps',
+    body: (fn, pl) => `Hi ${fn},\n\nMany business owners assume their current policy automatically covers new buildings, equipment, or tenant improvements. We help identify coverage gaps before they become costly.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 7,  channel: 'text' },
+  { week: 8,  channel: 'call' },
+  { week: 9,  channel: 'email',
+    subject: 'Helping Investors Protect Their Assets',
+    body: (fn, pl) => `Hi ${fn},\n\nCommercial investors often need more than just property insurance. We can review liability, umbrella, business income, cyber, and tenant-related exposures to help protect their investment.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 10, channel: 'text' },
+  { week: 11, channel: 'call' },
+  { week: 12, channel: 'email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pl) => `Hi ${fn},\n\nThank you for trusting Allen Insurance Agency as part of your professional network. We appreciate the opportunity to support your clients with responsive service and practical commercial insurance guidance.\n\nPlease let us know how we can better support your team.\n\n${pl}\nAllen Insurance Agency` },
+];
+
+const CADENCES = { realtor: REALTOR_CADENCE, roofer: ROOFER_CADENCE, businessBanker: BUSINESS_BANKER_CADENCE, commercialRealtor: COMMERCIAL_REALTOR_CADENCE };
 
 function wrapHtml(bodyText) {
   const bodyHtml = bodyText.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');

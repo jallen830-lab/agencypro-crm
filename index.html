@@ -5169,7 +5169,7 @@ function referralPartnerForm(d){
       <input type="checkbox" id="rp-sequence" checked style="margin-top:3px;flex-shrink:0">
       <label for="rp-sequence" style="font-size:12px;color:#166534;cursor:pointer">
         <strong>Create 90-Day Contact Cadence</strong> — 12 weekly touchpoints (text/call/email, repeating every 90 days). First touch due 5 days from today. Emails send automatically; calls and texts appear as tasks for the assigned producer.
-        <div style="color:#166534;opacity:.75;margin-top:2px">Content is tailored by partner type — Realtor/Mortgage Lender, Roofer, and Business Banker each have their own cadence. Other partner types don't have a cadence yet.</div>
+        <div style="color:#166534;opacity:.75;margin-top:2px">Content is tailored by partner type — Realtor/Mortgage Lender, Roofer, Business Banker, and Commercial Realtor each have their own cadence. Other partner types don't have a cadence yet.</div>
       </label>
     </div>` : ''}
     <div class="modal-actions">
@@ -5225,17 +5225,19 @@ async function saveReferralPartner(id){
 // Week 1 is due 5 days after the partner is added; each following week is +7 days.
 // Emails (weeks 3, 6, 9, 12) auto-send via netlify/functions/send-referral-cadence-emails.mjs,
 // which also creates the next cycle's 12 tasks after the Week 12 email goes out.
-// Three libraries exist — Realtor/Mortgage Lender partners get REFERRAL_REALTOR_CADENCE,
+// Four libraries exist — Realtor/Mortgage Lender partners get REFERRAL_REALTOR_CADENCE,
 // Roofer partners get REFERRAL_ROOFER_CADENCE, Business Banker partners get
-// REFERRAL_BUSINESS_BANKER_CADENCE. cadenceTypeForPartnerType() maps
+// REFERRAL_BUSINESS_BANKER_CADENCE, Commercial Realtor partners get
+// REFERRAL_COMMERCIAL_REALTOR_CADENCE. cadenceTypeForPartnerType() maps
 // partner type → which library + whether the cadence applies at all.
 function cadenceTypeForPartnerType(type){
   if(type==='Realtor' || type==='Mortgage Lender') return 'realtor';
   if(type==='Roofer') return 'roofer';
   if(type==='Business Banker') return 'businessBanker';
+  if(type==='Commercial Realtor') return 'commercialRealtor';
   return null;
 }
-const REFERRAL_CADENCE_LABELS = { realtor: 'Realtor/Mortgage', roofer: 'Roofer', businessBanker: 'Business Banker' };
+const REFERRAL_CADENCE_LABELS = { realtor: 'Realtor/Mortgage', roofer: 'Roofer', businessBanker: 'Business Banker', commercialRealtor: 'Commercial Realtor' };
 const REFERRAL_REALTOR_CADENCE = [
   { week: 1,  channel: 'text',  priority: 'high',
     label: 'Week 1 — Value Text',
@@ -5384,8 +5386,60 @@ const REFERRAL_BUSINESS_BANKER_QUARTERLY_IDEAS = [
   'Send handwritten thank-you notes after referrals.',
 ];
 
-const REFERRAL_CADENCES = { realtor: REFERRAL_REALTOR_CADENCE, roofer: REFERRAL_ROOFER_CADENCE, businessBanker: REFERRAL_BUSINESS_BANKER_CADENCE };
-const REFERRAL_QUARTERLY_IDEAS = { roofer: REFERRAL_ROOFER_QUARTERLY_IDEAS, businessBanker: REFERRAL_BUSINESS_BANKER_QUARTERLY_IDEAS };
+const REFERRAL_COMMERCIAL_REALTOR_CADENCE = [
+  { week: 1,  channel: 'text',  priority: 'high',
+    label: 'Week 1 — Value Text',
+    body: (fn, pf) => `Good morning, ${fn}! Just a reminder that we're always available if one of your buyers, investors, or tenants has commercial insurance questions. We're happy to help early in the transaction.` },
+  { week: 2,  channel: 'call',  priority: 'high',
+    label: 'Week 2 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, it's ${pf} with Allen Insurance Agency.\n\nHow has the commercial market been lately? What types of properties are moving?\n\nAre there any insurance challenges you're seeing that we can help solve for your clients?` },
+  { week: 3,  channel: 'email', priority: 'medium',
+    label: 'Week 3 — Educational Email',
+    subject: 'Insurance Can Prevent Closing Delays',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nOne of the easiest ways to keep a commercial transaction on track is to review insurance requirements early. We can help buyers understand property, liability, vacant building, builder's risk, and lender insurance requirements before closing.\n\nFeel free to send us a property address anytime.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 4,  channel: 'text',  priority: 'high',
+    label: 'Week 4 — Value Text',
+    body: (fn, pf) => `If you have a client purchasing a building or signing a lease, we'd be happy to review insurance requirements before closing. Sometimes a quick conversation prevents last-minute surprises.` },
+  { week: 5,  channel: 'call',  priority: 'high',
+    label: 'Week 5 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} here.\n\nWhat's the biggest challenge you're seeing with buyers and investors right now? Are there any property types that are becoming more difficult to insure? We'd love to be a resource.` },
+  { week: 6,  channel: 'email', priority: 'medium',
+    label: 'Week 6 — Educational Email',
+    subject: 'Common Commercial Insurance Gaps',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nMany business owners assume their current policy automatically covers new buildings, equipment, or tenant improvements. We help identify coverage gaps before they become costly.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 7,  channel: 'text',  priority: 'high',
+    label: 'Week 7 — Text',
+    body: (fn, pf) => `Hope business is going well! If you have a client looking at a unique property, warehouse, office, retail center, or mixed-use building, we'd be happy to provide an insurance review.` },
+  { week: 8,  channel: 'call',  priority: 'high',
+    label: 'Week 8 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} with Allen Insurance.\n\nHave you noticed any changes in lender insurance requirements or buyer concerns? We'd love to hear what you're seeing in the market.` },
+  { week: 9,  channel: 'email', priority: 'medium',
+    label: 'Week 9 — Educational Email',
+    subject: 'Helping Investors Protect Their Assets',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nCommercial investors often need more than just property insurance. We can review liability, umbrella, business income, cyber, and tenant-related exposures to help protect their investment.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 10, channel: 'text',  priority: 'high',
+    label: 'Week 10 — Text',
+    body: (fn, pf) => `Just checking in to see if we can help with any upcoming transactions or insurance questions. We appreciate the partnership!` },
+  { week: 11, channel: 'call',  priority: 'high',
+    label: 'Week 11 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}.\n\nThanks again for your partnership. Is there anyone else on your team I should meet so they know we're available as an insurance resource?` },
+  { week: 12, channel: 'email', priority: 'high',
+    label: 'Week 12 — Appreciation Email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nThank you for trusting Allen Insurance Agency as part of your professional network. We appreciate the opportunity to support your clients with responsive service and practical commercial insurance guidance.\n\nPlease let us know how we can better support your team.\n\n${pl}\nAllen Insurance Agency` },
+];
+
+const REFERRAL_COMMERCIAL_REALTOR_QUARTERLY_IDEAS = [
+  'Host a Commercial Risk & Insurance Lunch-and-Learn.',
+  'Provide quarterly commercial insurance market updates.',
+  'Create a joint investor checklist for due diligence.',
+  'Feature the broker in your business newsletter.',
+  'Schedule quarterly coffee meetings to discuss market trends.',
+  'Send handwritten thank-you notes after successful closings and referrals.',
+];
+
+const REFERRAL_CADENCES = { realtor: REFERRAL_REALTOR_CADENCE, roofer: REFERRAL_ROOFER_CADENCE, businessBanker: REFERRAL_BUSINESS_BANKER_CADENCE, commercialRealtor: REFERRAL_COMMERCIAL_REALTOR_CADENCE };
+const REFERRAL_QUARTERLY_IDEAS = { roofer: REFERRAL_ROOFER_QUARTERLY_IDEAS, businessBanker: REFERRAL_BUSINESS_BANKER_QUARTERLY_IDEAS, commercialRealtor: REFERRAL_COMMERCIAL_REALTOR_QUARTERLY_IDEAS };
 
 function referralProducerNames(agentId){
   const p = DB.producers.find(x=>x.id===agentId);
