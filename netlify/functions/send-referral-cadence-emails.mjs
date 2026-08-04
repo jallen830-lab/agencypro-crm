@@ -3,9 +3,11 @@
  * Netlify Scheduled Function — fires daily at 9:00 AM Central (15:00 UTC)
  *
  * Sends the Week 3/6/9/12 emails from whichever 90-day cadence applies to
- * the partner's type — REFERRAL_REALTOR_CADENCE (Realtor/Mortgage Lender)
- * or REFERRAL_ROOFER_CADENCE (Roofer) in index.html, content mirrored here
- * as REALTOR_CADENCE/ROOFER_CADENCE keyed by each task's cadenceType field.
+ * the partner's type — REFERRAL_REALTOR_CADENCE (Realtor/Mortgage Lender),
+ * REFERRAL_ROOFER_CADENCE (Roofer), or REFERRAL_BUSINESS_BANKER_CADENCE
+ * (Business Banker) in index.html, content mirrored here as
+ * REALTOR_CADENCE/ROOFER_CADENCE/BUSINESS_BANKER_CADENCE keyed by each
+ * task's cadenceType field.
  * Sends from the assigned producer's own mailbox on the verified
  * youragentonthego.com domain. When the Week 12 (appreciation) email
  * sends, this also creates the next cycle's 12 tasks (same cadenceType)
@@ -141,7 +143,30 @@ const ROOFER_CADENCE = [
     body: (fn, pl) => `Hi ${fn},\n\nThank you for trusting Allen Insurance Agency as a partner. We appreciate your professionalism and look forward to helping many more homeowners together.\n\n${pl}\nAllen Insurance Agency` },
 ];
 
-const CADENCES = { realtor: REALTOR_CADENCE, roofer: ROOFER_CADENCE };
+const BUSINESS_BANKER_CADENCE = [
+  { week: 1,  channel: 'text' },
+  { week: 2,  channel: 'call' },
+  { week: 3,  channel: 'email',
+    subject: 'Helping Business Clients Avoid Insurance Surprises',
+    body: (fn, pl) => `Hi ${fn},\n\nWe can review business insurance before financing, expansions, or property purchases to help identify coverage gaps before they become problems. Feel free to connect us anytime.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 4,  channel: 'text' },
+  { week: 5,  channel: 'call' },
+  { week: 6,  channel: 'email',
+    subject: 'Common Coverage Gaps for Business Owners',
+    body: (fn, pl) => `Hi ${fn},\n\nMany business owners overlook cyber liability, umbrella coverage, and business income protection. We'd be happy to review any client's policy.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 7,  channel: 'text' },
+  { week: 8,  channel: 'call' },
+  { week: 9,  channel: 'email',
+    subject: 'Insurance Reviews for Growing Businesses',
+    body: (fn, pl) => `Hi ${fn},\n\nGrowing businesses often need coverage updates for payroll, vehicles, inventory, or new locations. We'd be glad to review their policies.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 10, channel: 'text' },
+  { week: 11, channel: 'call' },
+  { week: 12, channel: 'email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pl) => `Hi ${fn},\n\nThank you for your continued partnership. We appreciate the trust you place in Allen Insurance Agency and look forward to helping your clients.\n\n${pl}\nAllen Insurance Agency` },
+];
+
+const CADENCES = { realtor: REALTOR_CADENCE, roofer: ROOFER_CADENCE, businessBanker: BUSINESS_BANKER_CADENCE };
 
 function wrapHtml(bodyText) {
   const bodyHtml = bodyText.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');

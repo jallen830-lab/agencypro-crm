@@ -5017,11 +5017,12 @@ function showReferralScripts(name, agentId, partnerType){
   }
   const { pf, pl } = referralProducerNames(agentId);
   const icons = { text:'💬', call:'📞', email:'📧' };
-  const ideasHtml = (cadenceType==='roofer') ? `
+  const quarterlyIdeas = REFERRAL_QUARTERLY_IDEAS[cadenceType];
+  const ideasHtml = quarterlyIdeas ? `
     <div style="margin-top:6px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
       <div style="background:#f8fafc;padding:8px 12px;font-size:12px;font-weight:700;color:var(--navy);border-bottom:1px solid var(--border)">💡 Quarterly Value Ideas (reference only — not scheduled)</div>
       <ul style="margin:0;padding:10px 12px 10px 28px;font-size:12px;color:var(--text);line-height:1.7">
-        ${REFERRAL_ROOFER_QUARTERLY_IDEAS.map(i=>`<li>${i}</li>`).join('')}
+        ${quarterlyIdeas.map(i=>`<li>${i}</li>`).join('')}
       </ul>
     </div>` : '';
   const html = `<div class="modal-title">📋 ${REFERRAL_CADENCE_LABELS[cadenceType]} 90-Day Cadence Scripts — ${name}</div>
@@ -5168,7 +5169,7 @@ function referralPartnerForm(d){
       <input type="checkbox" id="rp-sequence" checked style="margin-top:3px;flex-shrink:0">
       <label for="rp-sequence" style="font-size:12px;color:#166534;cursor:pointer">
         <strong>Create 90-Day Contact Cadence</strong> — 12 weekly touchpoints (text/call/email, repeating every 90 days). First touch due 5 days from today. Emails send automatically; calls and texts appear as tasks for the assigned producer.
-        <div style="color:#166534;opacity:.75;margin-top:2px">Content is tailored by partner type — Realtor/Mortgage Lender and Roofer each have their own cadence. Other partner types don't have a cadence yet.</div>
+        <div style="color:#166534;opacity:.75;margin-top:2px">Content is tailored by partner type — Realtor/Mortgage Lender, Roofer, and Business Banker each have their own cadence. Other partner types don't have a cadence yet.</div>
       </label>
     </div>` : ''}
     <div class="modal-actions">
@@ -5224,15 +5225,17 @@ async function saveReferralPartner(id){
 // Week 1 is due 5 days after the partner is added; each following week is +7 days.
 // Emails (weeks 3, 6, 9, 12) auto-send via netlify/functions/send-referral-cadence-emails.mjs,
 // which also creates the next cycle's 12 tasks after the Week 12 email goes out.
-// Two libraries exist — Realtor/Mortgage Lender partners get REFERRAL_REALTOR_CADENCE,
-// Roofer partners get REFERRAL_ROOFER_CADENCE. cadenceTypeForPartnerType() maps
+// Three libraries exist — Realtor/Mortgage Lender partners get REFERRAL_REALTOR_CADENCE,
+// Roofer partners get REFERRAL_ROOFER_CADENCE, Business Banker partners get
+// REFERRAL_BUSINESS_BANKER_CADENCE. cadenceTypeForPartnerType() maps
 // partner type → which library + whether the cadence applies at all.
 function cadenceTypeForPartnerType(type){
   if(type==='Realtor' || type==='Mortgage Lender') return 'realtor';
   if(type==='Roofer') return 'roofer';
+  if(type==='Business Banker') return 'businessBanker';
   return null;
 }
-const REFERRAL_CADENCE_LABELS = { realtor: 'Realtor/Mortgage', roofer: 'Roofer' };
+const REFERRAL_CADENCE_LABELS = { realtor: 'Realtor/Mortgage', roofer: 'Roofer', businessBanker: 'Business Banker' };
 const REFERRAL_REALTOR_CADENCE = [
   { week: 1,  channel: 'text',  priority: 'high',
     label: 'Week 1 — Value Text',
@@ -5329,7 +5332,60 @@ const REFERRAL_ROOFER_QUARTERLY_IDEAS = [
   'Share seasonal hail and wind claim trends.',
 ];
 
-const REFERRAL_CADENCES = { realtor: REFERRAL_REALTOR_CADENCE, roofer: REFERRAL_ROOFER_CADENCE };
+const REFERRAL_BUSINESS_BANKER_CADENCE = [
+  { week: 1,  channel: 'text',  priority: 'high',
+    label: 'Week 1 — Value Text',
+    body: (fn, pf) => `Good morning, ${fn}! Just a reminder that we're always available if one of your business or personal banking clients has insurance questions. We're happy to help anytime.` },
+  { week: 2,  channel: 'call',  priority: 'high',
+    label: 'Week 2 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, it's ${pf} with Allen Insurance Agency.\n\nHow have things been at the bank? What types of businesses are you working with most?\n\nAre there any insurance questions your customers have been asking? We'd love to help.` },
+  { week: 3,  channel: 'email', priority: 'medium',
+    label: 'Week 3 — Educational Email',
+    subject: 'Helping Business Clients Avoid Insurance Surprises',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nWe can review business insurance before financing, expansions, or property purchases to help identify coverage gaps before they become problems. Feel free to connect us anytime.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 4,  channel: 'text',  priority: 'high',
+    label: 'Week 4 — Value Text',
+    body: (fn, pf) => `If you have a client buying a building, expanding operations, or starting a business, we'd be happy to answer insurance questions early in the process.` },
+  { week: 5,  channel: 'call',  priority: 'high',
+    label: 'Week 5 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} here.\n\nWhat's the biggest challenge you're seeing with business clients right now? We'd love to know how we can better support you and your customers.` },
+  { week: 6,  channel: 'email', priority: 'medium',
+    label: 'Week 6 — Educational Email',
+    subject: 'Common Coverage Gaps for Business Owners',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nMany business owners overlook cyber liability, umbrella coverage, and business income protection. We'd be happy to review any client's policy.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 7,  channel: 'text',  priority: 'high',
+    label: 'Week 7 — Text',
+    body: (fn, pf) => `Hope you're having a great week! If any customers mention insurance concerns while discussing loans or banking services, we're always happy to help.` },
+  { week: 8,  channel: 'call',  priority: 'high',
+    label: 'Week 8 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}, ${pf} with Allen Insurance.\n\nAnything changing in the commercial lending market? Are there questions we can help answer for your clients?` },
+  { week: 9,  channel: 'email', priority: 'medium',
+    label: 'Week 9 — Educational Email',
+    subject: 'Insurance Reviews for Growing Businesses',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nGrowing businesses often need coverage updates for payroll, vehicles, inventory, or new locations. We'd be glad to review their policies.\n\n${pl}\nAllen Insurance Agency` },
+  { week: 10, channel: 'text',  priority: 'high',
+    label: 'Week 10 — Text',
+    body: (fn, pf) => `Just checking in to see if there's anything we can do to support you or your clients this week. Thanks again for your partnership!` },
+  { week: 11, channel: 'call',  priority: 'high',
+    label: 'Week 11 — Relationship Call',
+    body: (fn, pf) => `Hi ${fn}.\n\nThank you again for your partnership. Is there anyone else on your team I should meet so they know we're available as an insurance resource?` },
+  { week: 12, channel: 'email', priority: 'high',
+    label: 'Week 12 — Appreciation Email',
+    subject: 'Thank You for Your Partnership',
+    body: (fn, pf, pl) => `Hi ${fn},\n\nThank you for your continued partnership. We appreciate the trust you place in Allen Insurance Agency and look forward to helping your clients.\n\n${pl}\nAllen Insurance Agency` },
+];
+
+const REFERRAL_BUSINESS_BANKER_QUARTERLY_IDEAS = [
+  'Host a Business Risk Review workshop together.',
+  'Share quarterly commercial insurance market updates.',
+  'Provide cyber and fraud prevention resources.',
+  'Feature the bank in your agency newsletter.',
+  'Take the banking team to lunch or coffee.',
+  'Send handwritten thank-you notes after referrals.',
+];
+
+const REFERRAL_CADENCES = { realtor: REFERRAL_REALTOR_CADENCE, roofer: REFERRAL_ROOFER_CADENCE, businessBanker: REFERRAL_BUSINESS_BANKER_CADENCE };
+const REFERRAL_QUARTERLY_IDEAS = { roofer: REFERRAL_ROOFER_QUARTERLY_IDEAS, businessBanker: REFERRAL_BUSINESS_BANKER_QUARTERLY_IDEAS };
 
 function referralProducerNames(agentId){
   const p = DB.producers.find(x=>x.id===agentId);
