@@ -808,58 +808,25 @@ select.form-input{cursor:pointer}
       <!-- TASKS -->
       <div class="view" id="view-tasks">
 
-        <!-- Quoted Follow-Up Panel -->
-        <div class="card" style="margin-bottom:14px;border-left:4px solid #0ea5a0">
+        <!-- Overdue -->
+        <div class="card" style="margin-bottom:14px;border-left:4px solid #ef4444">
           <div class="card-header">
-            <div class="card-title">🎯 Quoted & Permits Follow-Ups</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span id="quoted-followup-badge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700"></span>
-              <span style="font-size:12px;color:var(--muted)">Auto-created when a lead is marked Quoted</span>
-            </div>
+            <div class="card-title">⚠️ Overdue</div>
+            <span id="overdue-badge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700"></span>
           </div>
-          <div id="quoted-followup-list"></div>
+          <div id="overdue-task-list"></div>
         </div>
 
-        <!-- Remarketing Touchpoints Panel -->
-        <div class="card" style="margin-bottom:14px;border-left:4px solid #8b5cf6">
-          <div class="card-header">
-            <div class="card-title">🔄 Remarketing Touchpoints</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span id="remarketing-touchpoint-badge" style="display:none;background:#8b5cf6;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700"></span>
-              <span style="font-size:12px;color:var(--muted)">3, 6 &amp; 9-month stays created when a remarket date is set</span>
-            </div>
-          </div>
-          <div id="remarketing-touchpoint-list"></div>
-        </div>
-
-        <!-- Referral Partner Sequence Panel -->
-        <div class="card" style="margin-bottom:14px;border-left:4px solid #3b82f6">
-          <div class="card-header">
-            <div class="card-title">🤝 Referral Partner Touchpoints</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span id="referral-sequence-badge" style="display:none;background:#3b82f6;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700"></span>
-              <span style="font-size:12px;color:var(--muted)">12-month sequence — calls, emails &amp; texts to stay top of mind</span>
-            </div>
-          </div>
-          <div id="referral-sequence-list"></div>
-        </div>
-
-        <!-- All Tasks -->
+        <!-- Due Today -->
         <div class="card">
           <div class="card-header">
-            <div class="card-title">All Tasks</div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <select class="form-input" style="width:160px" id="task-filter" onchange="renderTasks()">
-                <option value="">All Tasks</option>
-                <option value="today">Due Today &amp; Overdue</option>
-                <option value="open">Open Only (hide future)</option>
-                <option value="high">High Priority</option>
-                <option value="done">Completed</option>
-              </select>
+            <div class="card-title">📅 Due Today</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="today-badge" style="display:none;background:#0ea5a0;color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700"></span>
               <button class="btn btn-primary btn-sm" onclick="openModal(&#39;task&#39;)">+ Add Task</button>
             </div>
           </div>
-          <div id="tasks-content"></div>
+          <div id="today-task-list"></div>
         </div>
       </div>
 
@@ -2349,7 +2316,7 @@ document.getElementById('search-input').addEventListener('input',function(){
     customers:  '#customers-tbody tr',
     renewals:   '#renewals-content tr',
     remarketing:'#cl-tbody tr',
-    tasks:      '#tasks-content > div',
+    tasks:      '#overdue-task-list > div, #today-task-list > div',
     scoreboard: '#producers-tbody tr',
   };
   const selector = tableMap[currentView];
@@ -3241,82 +3208,118 @@ function showWorkflow(workflowId){
 // ─────────────────────────────────────────────────────────────────────
 
 // ── TASKS ──
-function renderTasks(){
-  renderQuotedFollowUps();
-  renderRemarketingTouchpoints();
-  renderReferralPartnerSequence();
-  // Update quoted badge
-  const open = (DB.tasks||[]).filter(t=>(t.type==='quoted-followup'||t.type==='permits-followup')&&!t.done);
-  const badge = document.getElementById('quoted-followup-badge');
-  if(badge){ if(open.length){ badge.style.display='inline'; badge.textContent=open.length+' open'; } else { badge.style.display='none'; } }
-  try {
-  const el2 = document.getElementById('tasks-content');
-  if(!el2){ console.error('tasks-content not found!'); return; }
-  el2.innerHTML = '<div style="padding:16px;color:#666">Loading tasks…</div>';
-  const f=document.getElementById('task-filter').value;
-  const today = new Date(); today.setHours(0,0,0,0);
+// ── UNIFIED TASK DASHBOARD ──────────────────────────────────────────
+// Every task type (ad-hoc, quoted/permits follow-up, remarketing touchpoint,
+// referral-partner cadence/sequence, referral thank-you) lives in the same
+// `tasks` collection. Instead of separate panels per type, everything shows
+// in one of two buckets — Overdue or Due Today. Future-dated tasks stay
+// hidden entirely until their due date arrives; there is no "upcoming" view.
+const TASK_PRIORITY_RANK = { high:0, medium:1, low:2 };
 
-  const allTasks = [...DB.tasks].filter(t=>{
-    // "Open Only" filter hides future tasks
-    if(f==='open'){
-      if(!t.done && t.due){
-        const due = new Date(t.due+'T00:00:00');
-        if(due > today) return false;
-      }
-      return !t.done;
-    }
-    if(f==='done')   return t.done;
-    if(f==='high')   return t.priority==='high'&&!t.done;
-    if(f==='today'){
-      if(t.done) return false;
-      if(!t.due) return false;
-      const due = new Date(t.due+'T00:00:00');
-      return due <= today;
-    }
-    // Default (All Tasks) — show everything
-    return true;
-  }).sort((a,b)=>a.done-b.done||(a.due||'').localeCompare(b.due||''));
+// Type-specific context: a colored chip for at-a-glance identification, an
+// optional Script button (mirrors what each dedicated panel used to show),
+// and how many days a "snooze" bumps the due date.
+function taskTypeMeta(t){
+  if(t.type==='quoted-followup' || t.type==='permits-followup'){
+    const isPermits = t.type==='permits-followup';
+    const d = t.sequenceDay !== undefined ? t.sequenceDay : (() => {
+      const txt=(t.text||'').toLowerCase();
+      if(txt.includes('day 0')) return 0;
+      if(txt.includes('day 1')) return 1;
+      if(txt.includes('day 3')) return 3;
+      if(txt.includes('day 7')) return 7;
+      if(txt.includes('day 10')) return 10;
+      if(txt.includes('day 14')||txt.includes('final')) return 14;
+      return 0;
+    })();
+    const ttype = t.taskType || (t.text&&t.text.includes('📧')?'email':t.text&&t.text.includes('💬')?'text':'call');
+    const nm=(t.leadName||'').replace(/'/g,"\\'");
+    const ln=(t.line||'').replace(/'/g,"\\'");
+    const scriptKey = d===0?'day0':d===1?'day1':d===3?(ttype==='email'?'day3email':'day3'):d===7?(ttype==='text'?'day7text':'day7'):d===10?(ttype==='email'?'day10email':'day10'):'day14';
+    return {
+      chip: `${isPermits?'🏗️ Permits':'🎯 Quoted'}${t.leadName?' — '+t.leadName:''}`,
+      chipColor: isPermits ? '#1d4ed8' : '#0ea5a0',
+      scriptHtml: `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="${isPermits?`showPermitsScript('${t.seqKey||'p_same_day'}','${nm}','${ln}')`:`showQuotedScript('${scriptKey}','${nm}','${ln}')`}">📋 Script</button>`,
+      snoozeDays: 3,
+    };
+  }
+  if(t.type==='remarketing-touchpoint'){
+    return {
+      chip: `🔄 Remarketing (Mo ${t.touchpointMonth||'?'})${t.leadName?' — '+t.leadName:''}`,
+      chipColor: '#8b5cf6', scriptHtml: '', snoozeDays: 14,
+    };
+  }
+  if(t.type==='referral-partner-cadence' || t.type==='referral-partner-sequence'){
+    const isCadence = t.type==='referral-partner-cadence';
+    const channel = isCadence ? t.touchpointType : null;
+    const badgeLabel = isCadence ? `Wk ${t.week||'?'}` : `Mo ${t.sequenceMonth||'?'}`;
+    const autoNote = (isCadence && t.autoSend) ? ` <span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">🤖 auto-sends</span>` : '';
+    return {
+      chip: `🤝 ${t.partnerName||'Referral Partner'} (${badgeLabel})${autoNote}`,
+      chipColor: '#3b82f6',
+      scriptHtml: (isCadence && channel!=='email') ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralCadenceScript('${t.id}')">📋 Script</button>` : '',
+      snoozeDays: 30,
+    };
+  }
+  if(t.type==='referral-thankyou'){
+    return { chip: `🎁 Referral Thank-You${t.partnerName?' — '+t.partnerName:''}`, chipColor:'#ec4899', scriptHtml:'', snoozeDays: 7 };
+  }
+  if(t.type==='lead-task'){
+    return { chip: t.leadName ? `📝 ${t.leadName}` : '', chipColor:'#64748b', scriptHtml:'', snoozeDays: 7 };
+  }
+  return { chip:'', chipColor:'#64748b', scriptHtml:'', snoozeDays: 7 };
+}
 
-  // Count upcoming (future) tasks
-  const upcomingCount = DB.tasks.filter(t=>{
-    if(t.done||!t.due) return false;
-    const due = new Date(t.due+'T00:00:00');
-    return due > today;
-  }).length;
-
-  const overdueCount = DB.tasks.filter(t=>{
-    if(t.done||!t.due) return false;
-    const due = new Date(t.due+'T00:00:00');
-    return due < today;
-  }).length;
-
-  const summaryNote = (upcomingCount > 0 || overdueCount > 0) ? `
-    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      ${overdueCount>0?`<span class="badge badge-red">⚠️ ${overdueCount} overdue</span>`:''}
-      ${upcomingCount>0?`<span class="badge badge-blue">🕐 ${upcomingCount} upcoming</span>`:''}
-    </div>` : '';
-
-  document.getElementById('tasks-content').innerHTML = summaryNote + (allTasks.length ? allTasks.map(t=>{
-    const d=daysUntil(t.due||''), ov=d<0&&!t.done;
-    const isFuture = !t.done && t.due && new Date(t.due+'T00:00:00') > today;
-    return `<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;${isFuture?'opacity:0.6':''}">
-      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')" style="width:16px;height:16px;margin-top:2px;accent-color:var(--teal);cursor:pointer;flex-shrink:0">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:500;${t.done?'text-decoration:line-through;color:var(--muted)':''}${ov?';color:var(--red)':''}">${t.text}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px">
-          ${ov?'<strong style="color:var(--red)">OVERDUE — </strong>':''}
-          ${isFuture?'<span style="color:#3b82f6">📅 Upcoming — </span>':''}
-          Due: ${fmtDate(t.due)} &bull; ${agentName(t.agentId)||'You'}${t.leadName?` &bull; ${t.leadName}`:''}
-        </div>
+function taskRowHtml(t){
+  const meta = taskTypeMeta(t);
+  const priColor = {high:'#ef4444',medium:'#f59e0b',low:'#94a3b8'}[t.priority]||'#94a3b8';
+  return `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border-bottom:1px solid var(--border)">
+    <div style="width:4px;height:40px;border-radius:2px;background:${priColor};flex-shrink:0;margin-top:2px"></div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px">${t.text}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${meta.chip?`<span style="background:${meta.chipColor}18;color:${meta.chipColor};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">${meta.chip}</span>`:''}
+        <span style="font-size:11px;color:var(--muted)">${getProducerName(t.agentId)||'Unassigned'}${t.due?` &bull; Due ${fmtDate(t.due)}`:''}</span>
+        <span class="badge ${priorityClass(t.priority)}">${t.priority}</span>
       </div>
-      <span class="badge ${priorityClass(t.priority)}">${t.priority}</span>
-      <button class="btn btn-danger btn-sm" onclick="deleteTask('${t.id}')">✕</button>
-    </div>`;}).join('') : `<div class="empty-state" style="padding:24px">
-      <div style="font-size:24px;margin-bottom:8px">✅</div>
-      <div style="font-weight:600;margin-bottom:4px">No tasks found</div>
-      <div style="font-size:12px;color:var(--muted)">${DB.tasks.length} total tasks in database. ${DB.tasks.length===0?'Add a task using the + Add Task button above.':'Try changing the filter above.'}</div>
-    </div>`);
-  } catch(e){ document.getElementById('tasks-content').innerHTML=`<div style="color:red;padding:16px">Tasks error: ${e.message}</div>`; }
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
+      ${meta.scriptHtml}
+      <button class="btn btn-primary btn-sm" onclick="dismissQuotedTask('${t.id}')" title="Mark done">✓ Done</button>
+      <button class="btn btn-ghost btn-sm" onclick="rescheduleQuotedTask('${t.id}',${meta.snoozeDays})" title="Snooze ${meta.snoozeDays} days">+${meta.snoozeDays}d</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteTask('${t.id}')" title="Delete">✕</button>
+    </div>
+  </div>`;
+}
+
+function renderTasks(){
+  try {
+    const overdueEl = document.getElementById('overdue-task-list');
+    const todayEl   = document.getElementById('today-task-list');
+    if(!overdueEl || !todayEl) return;
+    const todayStr = new Date().toISOString().slice(0,10);
+
+    const open = (DB.tasks||[]).filter(t=>!t.done);
+    const rank = t => TASK_PRIORITY_RANK[t.priority] ?? 3;
+    const overdue = open.filter(t=>t.due && t.due < todayStr)
+      .sort((a,b)=> rank(a)-rank(b) || (a.due||'').localeCompare(b.due||''));
+    const dueToday = open.filter(t=>!t.due || t.due===todayStr)
+      .sort((a,b)=> rank(a)-rank(b) || (a.text||'').localeCompare(b.text||''));
+
+    const overdueBadge = document.getElementById('overdue-badge');
+    if(overdueBadge){ if(overdue.length){ overdueBadge.style.display='inline'; overdueBadge.textContent=overdue.length; } else overdueBadge.style.display='none'; }
+    const todayBadge = document.getElementById('today-badge');
+    if(todayBadge){ if(dueToday.length){ todayBadge.style.display='inline'; todayBadge.textContent=dueToday.length; } else todayBadge.style.display='none'; }
+
+    overdueEl.innerHTML = overdue.length ? overdue.map(taskRowHtml).join('')
+      : '<div class="empty-state" style="padding:20px">🎉 Nothing overdue — nice work!</div>';
+    todayEl.innerHTML = dueToday.length ? dueToday.map(taskRowHtml).join('')
+      : '<div class="empty-state" style="padding:20px">✅ Nothing due today.</div>';
+  } catch(e){
+    console.error('Tasks error:', e);
+    const el = document.getElementById('overdue-task-list');
+    if(el) el.innerHTML = `<div style="color:red;padding:16px">Tasks error: ${e.message}</div>`;
+  }
 }
 async function toggleTask(id){ const t=DB.tasks.find(t=>t.id===id); if(t) await db.collection('tasks').doc(id).update({done:!t.done}); }
 async function deleteTask(id){ if(!confirm('Delete?'))return; await db.collection('tasks').doc(id).delete(); toast('Task removed'); }
@@ -4262,189 +4265,6 @@ async function rescheduleQuotedTask(taskId, daysFromNow){
   newDue.setDate(newDue.getDate() + daysFromNow);
   await db.collection('tasks').doc(taskId).update({due: newDue.toISOString().slice(0,10)});
   toast(`Rescheduled +${daysFromNow} days`);
-}
-
-function renderQuotedFollowUps(){
-  const el = document.getElementById('quoted-followup-list');
-  if(!el) return;
-  const today = new Date().toISOString().slice(0,10);
-  const open = (DB.tasks||[]).filter(t => (t.type==='quoted-followup' || t.type==='permits-followup') && !t.done && t.due <= today);
-  if(!open.length){
-    el.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;font-size:13px">🎉 No open quoted follow-ups — nice work!</div>';
-    return;
-  }
-  const sorted = [...open].sort((a,b)=>a.due.localeCompare(b.due));
-  el.innerHTML = sorted.map(t => {
-    const overdue = t.due < today;
-    const dueToday = t.due === today;
-    const dueBadge = overdue
-      ? `<span style="background:#fee2e2;color:#ef4444;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600">⚠️ Overdue</span>`
-      : dueToday
-        ? `<span style="background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600">📅 Today</span>`
-        : `<span style="background:#f1f5f9;color:var(--muted);padding:2px 7px;border-radius:10px;font-size:11px">${fmtDate(t.due)}</span>`;
-    const priColor = {high:'#ef4444',medium:'#f59e0b',low:'#94a3b8'}[t.priority]||'#94a3b8';
-    const isPermits = t.type==='permits-followup';
-    // Map task to correct script using sequenceDay + task text type
-    const d = t.sequenceDay !== undefined ? t.sequenceDay : (() => {
-      // Fallback: infer day from task text for legacy records without sequenceDay
-      const txt = (t.text||'').toLowerCase();
-      if(txt.includes('day 0') || txt.includes('review') && txt.includes('quote') && txt.includes('confirm')) return 0;
-      if(txt.includes('day 1') || txt.includes('confirmation text') || txt.includes('landed okay')) return 1;
-      if(txt.includes('day 3') && txt.includes('email')) return 3;
-      if(txt.includes('day 3')) return 3;
-      if(txt.includes('day 7') && txt.includes('text')) return 7;
-      if(txt.includes('day 7')) return 7;
-      if(txt.includes('day 10') && txt.includes('email')) return 10;
-      if(txt.includes('day 10')) return 10;
-      if(txt.includes('day 14') || txt.includes('final')) return 14;
-      return 0;
-    })();
-    const ttype = t.taskType || (t.text&&t.text.includes('📧')?'email':t.text&&t.text.includes('💬')?'text':'call');
-    const nm = (t.leadName||'').replace(/'/g,"\\'");
-    const ln = (t.line||'').replace(/'/g,"\\'");
-    const scriptKey = d===0?'day0'
-      : d===1?'day1'
-      : d===3?(ttype==='email'?'day3email':'day3')
-      : d===7?(ttype==='text'?'day7text':'day7')
-      : d===10?(ttype==='email'?'day10email':'day10')
-      : 'day14';
-    return `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;border-bottom:1px solid var(--border)">
-      <div style="width:4px;height:40px;border-radius:2px;background:${priColor};flex-shrink:0;margin-top:2px"></div>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px">${t.text}</div>
-        ${isPermits?'<span style="background:#dbeafe;color:#1d4ed8;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600;margin-bottom:4px;display:inline-block">🏗️ Permits Lead — F.2 Cadence</span>':''}
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          ${dueBadge}
-          <span style="font-size:11px;color:var(--muted)">${getProducerName(t.agentId)}</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="${t.type==='permits-followup'?`showPermitsScript('${t.seqKey||'p_same_day'}','${nm}','${ln}')`:`showQuotedScript('${scriptKey}','${nm}','${ln}')`}">📋 Script</button>
-        <button class="btn btn-primary btn-sm" onclick="dismissQuotedTask('${t.id}')" title="Mark done">✓ Done</button>
-        <button class="btn btn-ghost btn-sm" onclick="rescheduleQuotedTask('${t.id}',3)" title="Snooze 3 days">+3d</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderRemarketingTouchpoints(){
-  const el = document.getElementById('remarketing-touchpoint-list');
-  if(!el) return;
-  const today = new Date().toISOString().slice(0,10);
-  const open = (DB.tasks||[]).filter(t => t.type==='remarketing-touchpoint' && !t.done && t.due <= today);
-  if(!open.length){
-    el.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;font-size:13px">No open remarketing touchpoints</div>';
-    // Update badge
-    const badge = document.getElementById('remarketing-touchpoint-badge');
-    if(badge) badge.style.display='none';
-    return;
-  }
-  // Group by month
-  const byMonth = {};
-  open.forEach(t => {
-    const m = t.touchpointMonth || 0;
-    if(!byMonth[m]) byMonth[m] = [];
-    byMonth[m].push(t);
-  });
-  const monthLabels = {3:'3-Month Touchpoint',6:'6-Month Touchpoint',9:'9-Month Touchpoint'};
-  const monthColors = {3:'#0ea5a0',6:'#8b5cf6',9:'#f59e0b'};
-  let html = '';
-  Object.keys(byMonth).sort((a,b)=>a-b).forEach(m => {
-    const tasks = byMonth[m].sort((a,b)=>a.due.localeCompare(b.due));
-    const color = monthColors[m] || '#64748b';
-    const label = monthLabels[m] || `${m}-Month`;
-    // Get lead name from first task
-    const leadName = tasks[0].leadName || '';
-    const dueDate = tasks[0].due;
-    const overdue = dueDate < today;
-    const dueBadge = overdue
-      ? `<span style="background:#fee2e2;color:#ef4444;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600">⚠️ Overdue</span>`
-      : `<span style="background:#f1f5f9;color:var(--muted);padding:2px 7px;border-radius:10px;font-size:11px">${fmtDate(dueDate)}</span>`;
-    html += `<div style="border-bottom:1px solid var(--border);padding:10px 12px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="background:${color};color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:600">${label}</span>
-        <span style="font-size:12px;font-weight:600;color:var(--text)">${leadName}</span>
-        ${dueBadge}
-      </div>`;
-    tasks.forEach(t => {
-      const priColor = {high:'#ef4444',medium:'#f59e0b',low:'#94a3b8'}[t.priority]||'#94a3b8';
-      html += `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;padding-left:8px">
-        <div style="width:3px;height:32px;border-radius:2px;background:${priColor};flex-shrink:0"></div>
-        <div style="flex:1;font-size:12px;color:var(--text)">${t.text}</div>
-        <div style="display:flex;gap:4px;flex-shrink:0">
-          <button class="btn btn-primary btn-sm" onclick="dismissQuotedTask('${t.id}')" style="font-size:11px;padding:3px 8px">✓</button>
-          <button class="btn btn-ghost btn-sm" onclick="rescheduleQuotedTask('${t.id}',14)" style="font-size:11px;padding:3px 8px">+14d</button>
-        </div>
-      </div>`;
-    });
-    html += '</div>';
-  });
-  el.innerHTML = html;
-  // Update badge
-  const badge = document.getElementById('remarketing-touchpoint-badge');
-  if(badge){ badge.style.display='inline'; badge.textContent=open.length+' open'; }
-}
-
-function renderReferralPartnerSequence(){
-  const el = document.getElementById('referral-sequence-list');
-  if(!el) return;
-  const today = new Date().toISOString().slice(0,10);
-  const open = (DB.tasks||[]).filter(t => (t.type==='referral-partner-cadence' || t.type==='referral-partner-sequence') && !t.done && t.due <= today);
-  const badge = document.getElementById('referral-sequence-badge');
-  if(!open.length){
-    el.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;font-size:13px">No upcoming referral partner touchpoints</div>';
-    if(badge) badge.style.display='none';
-    return;
-  }
-  if(badge){ badge.style.display='inline'; badge.textContent=open.length+' open'; }
-  // Group by partner
-  const byPartner = {};
-  open.forEach(t => {
-    const key = t.partnerName || t.partnerId || 'Unknown';
-    if(!byPartner[key]) byPartner[key] = [];
-    byPartner[key].push(t);
-  });
-  const channelColors = { call:'#0ea5a0', email:'#3b82f6', text:'#8b5cf6' };
-  let html = '';
-  Object.keys(byPartner).sort().forEach(partnerName => {
-    const tasks = byPartner[partnerName].sort((a,b)=>(a.week||a.sequenceMonth||0)-(b.week||b.sequenceMonth||0));
-    html += `<div style="border-bottom:1px solid var(--border);padding:10px 12px">
-      <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px">
-        🤝 ${partnerName}
-        <span style="font-size:11px;font-weight:400;color:var(--muted)">${tasks.length} touchpoint${tasks.length!==1?'s':''} remaining &bull; ${getProducerName(tasks[0].agentId)||'Unassigned'}</span>
-      </div>`;
-    tasks.forEach(t => {
-      const overdue = t.due < today;
-      const dueToday = t.due === today;
-      const isCadence = t.type==='referral-partner-cadence';
-      const channel = isCadence ? t.touchpointType : null;
-      const typeColor = isCadence ? (channelColors[channel]||'#64748b') : ({'📞 Call':'#0ea5a0','📧 Email':'#3b82f6','💬 Text':'#8b5cf6','☕ Visit':'#f59e0b','🎁 Gift':'#ef4444'}[t.touchpointType] || '#64748b');
-      const badgeLabel = isCadence ? `Wk ${t.week||'?'}` : `Mo ${t.sequenceMonth||'?'}`;
-      const dueBadge = overdue
-        ? `<span style="background:#fee2e2;color:#ef4444;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">Overdue</span>`
-        : dueToday
-          ? `<span style="background:#fef3c7;color:#d97706;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">Today</span>`
-          : `<span style="font-size:10px;color:var(--muted)">${fmtDate(t.due)}</span>`;
-      const autoNote = (isCadence && t.autoSend)
-        ? `<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">🤖 auto-sends</span>`
-        : '';
-      const scriptBtn = (isCadence && channel!=='email')
-        ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralCadenceScript('${t.id}')">📋</button>`
-        : '';
-      html += `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;padding-left:4px">
-        <span style="background:${typeColor};color:#fff;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;flex-shrink:0;min-width:44px;text-align:center">${badgeLabel}</span>
-        <div style="flex:1;font-size:12px;color:var(--text);line-height:1.4">${t.text}</div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-          ${dueBadge}${autoNote}
-          ${scriptBtn}
-          <button class="btn btn-primary btn-sm" onclick="dismissQuotedTask('${t.id}')" style="font-size:11px;padding:3px 8px">✓</button>
-          <button class="btn btn-ghost btn-sm" onclick="rescheduleQuotedTask('${t.id}',30)" style="font-size:11px;padding:3px 8px">+30d</button>
-        </div>
-      </div>`;
-    });
-    html += '</div>';
-  });
-  el.innerHTML = html;
 }
 
 function getProducerName(agentId){
