@@ -3262,7 +3262,12 @@ function taskTypeMeta(t){
     };
   }
   if(t.type==='referral-thankyou'){
-    return { chip: `🎁 Referral Thank-You${t.partnerName?' — '+t.partnerName:''}`, chipColor:'#ec4899', scriptHtml:'', snoozeDays: 7 };
+    return {
+      chip: `🎁 Referral Thank-You${t.partnerName?' — '+t.partnerName:''}`,
+      chipColor:'#ec4899',
+      scriptHtml: t.script ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showReferralThankYouScript('${t.id}')">📋 Script</button>` : '',
+      snoozeDays: 7,
+    };
   }
   if(t.type==='lead-task'){
     return { chip: t.leadName ? `📝 ${t.leadName}` : '', chipColor:'#64748b', scriptHtml:'', snoozeDays: 7 };
@@ -5411,19 +5416,19 @@ async function createReferralThankYouSequence(partnerId, partnerName, clientName
   const today = new Date();
   const tasks = [
     {
-      daysOut: 0,
-      text: `💬 Text ${partnerName} immediately — "Thank you for trusting us with ${clientName}. I'll personally make sure they have an outstanding experience."`,
-      priority: 'high', label: 'Immediate Thank-You Text'
+      daysOut: 0, channel: 'text', priority: 'high', label: 'Immediate Thank-You Text',
+      text: `💬 Text ${partnerName} immediately to thank them for the referral`,
+      script: `Hi ${partnerName}, thank you for trusting us with ${clientName}! I'll personally make sure they have an outstanding experience.`,
     },
     {
-      daysOut: 3,
-      text: `📞 Update ${partnerName} on ${clientName} — "Just wanted to let you know we've connected with your client and everything is moving along well. Thanks again for thinking of us."`,
-      priority: 'high', label: 'Quote/Progress Update'
+      daysOut: 3, channel: 'call', priority: 'high', label: 'Quote/Progress Update',
+      text: `📞 Call ${partnerName} with a progress update on ${clientName}`,
+      script: `Hi ${partnerName}, just wanted to let you know we've connected with ${clientName} and everything is moving along well. Thanks again for thinking of us.`,
     },
     {
-      daysOut: 14,
-      text: `💬 Final update to ${partnerName} re: ${clientName} — "Great news! Everything is finalized. We appreciate your trust and will take great care of them going forward." (Send after policy is bound)`,
-      priority: 'medium', label: 'Policy Bound Confirmation'
+      daysOut: 14, channel: 'text', priority: 'medium', label: 'Policy Bound Confirmation',
+      text: `💬 Text ${partnerName} to confirm ${clientName}'s policy is bound (send after binding)`,
+      script: `Great news, ${partnerName}! ${clientName}'s policy is finalized. We appreciate your trust and will take great care of them going forward.`,
     },
   ];
   for (const t of tasks) {
@@ -5431,6 +5436,7 @@ async function createReferralThankYouSequence(partnerId, partnerName, clientName
     due.setDate(today.getDate() + t.daysOut);
     await db.collection('tasks').add({
       text: t.text,
+      script: t.script,
       due: due.toISOString().slice(0, 10),
       priority: t.priority,
       agentId: '',
@@ -5438,7 +5444,8 @@ async function createReferralThankYouSequence(partnerId, partnerName, clientName
       partnerId,
       partnerName,
       clientName,
-      touchpointType: '💬 Text',
+      touchpointType: t.channel==='call' ? '📞 Call' : '💬 Text',
+      channel: t.channel,
       type: 'referral-thankyou',
       sequenceLabel: t.label,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -5446,6 +5453,23 @@ async function createReferralThankYouSequence(partnerId, partnerName, clientName
   }
   logActivity('🎁','#dbeafe',`Referral thank-you sequence created for <b>${partnerName}</b> — client: ${clientName}`);
   toast(`3 referral thank-you tasks created for ${partnerName}`);
+}
+
+// Script preview for a referral thank-you touchpoint — mirrors showReferralCadenceScript.
+function showReferralThankYouScript(taskId){
+  const task = DB.tasks.find(x=>x.id===taskId);
+  if(!task || !task.script) return;
+  const icon = task.channel==='call' ? '📞' : '💬';
+  const html = `<div class="modal-title">${icon} ${task.sequenceLabel||'Script'} — ${task.partnerName||''}</div>
+    <div class="script-block" style="border:1px solid var(--border);border-radius:8px;padding:12px">
+      <pre style="margin:0;font-family:inherit;font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.6">${task.script}</pre>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="navigator.clipboard.writeText(this.closest('#modal-content').querySelector('.script-block pre').textContent).then(()=>toast('Copied!'))">Copy</button>
+    </div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('modal-content').innerHTML = html;
 }
 // ─────────────────────────────────────────────────────────────────────
 
