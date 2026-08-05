@@ -891,6 +891,27 @@ select.form-input{cursor:pointer}
           </div>
         </div>
 
+        <!-- Closing Ratio by Lead Source -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🎯 Closing Ratio by Lead Source</div>
+            <span class="badge badge-blue">All Leads</span>
+          </div>
+          <div class="tbl-wrap">
+            <table id="source-closing-table">
+              <thead><tr>
+                <th>Source</th>
+                <th>Total Leads</th>
+                <th>Closed Won</th>
+                <th>Closed Lost</th>
+                <th>Premium Won</th>
+                <th>Close Rate</th>
+              </tr></thead>
+              <tbody id="source-closing-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Charts row -->
         <div class="grid-2">
           <div class="card"><div class="card-header"><div class="card-title">Premium by Carrier</div></div><div id="report-carrier-chart"></div></div>
@@ -3400,7 +3421,7 @@ function renderReports(){
 
   // Existing charts
   const lC={Auto:'#3b82f6',Home:'#0ea5a0',Life:'#f59e0b',Commercial:'#8b5cf6',Bundle:'#22c55e',Umbrella:'#6366f1',Specialty:'#ec4899','Wind/Hail Buydown':'#14b8a6'};
-  const sC={Referral:'#22c55e',Internet:'#3b82f6','Walk-In':'#f59e0b','Cold Call':'#8b5cf6',Social:'#ef4444',Permits:'#0ea5a0'};
+  const sC={Referral:'#22c55e',Internet:'#3b82f6','Walk-In':'#f59e0b','Cold Call':'#8b5cf6',Social:'#ef4444','Building Permit':'#0ea5a0','Neighborhood Farming':'#6366f1'};
   const stC={New:'#22c55e',Contacted:'#f59e0b',Quoted:'#3b82f6','Closed Won':'#0ea5a0','Closed Lost':'#ef4444'};
   const bL={},bS={},bSt={};
   leads.forEach(l=>{ bL[l.line]=(bL[l.line]||0)+1; bS[l.source]=(bS[l.source]||0)+1; bSt[l.status]=(bSt[l.status]||0)+1; });
@@ -3411,6 +3432,40 @@ function renderReports(){
   document.getElementById('report-line-chart').innerHTML=bars(bL,lC);
   document.getElementById('report-source-chart').innerHTML=bars(bS,sC);
   document.getElementById('report-status-chart').innerHTML=bars(bSt,stC);
+
+  // ── CLOSING RATIO BY LEAD SOURCE ──
+  const sourceMap = {};
+  leads.forEach(l=>{
+    const src = l.source || 'Not Set';
+    if(!sourceMap[src]) sourceMap[src] = { total:0, won:0, lost:0, premium:0 };
+    sourceMap[src].total++;
+    if(l.status==='Closed Won'){ sourceMap[src].won++; sourceMap[src].premium += Number(l.premium||0); }
+    if(l.status==='Closed Lost') sourceMap[src].lost++;
+  });
+  const sourceRows = Object.entries(sourceMap).sort((a,b)=>b[1].total-a[1].total);
+  document.getElementById('source-closing-tbody').innerHTML = sourceRows.length ? sourceRows.map(([name,d])=>{
+    const rate = d.total ? Math.round((d.won/d.total)*100) : 0;
+    const color = sC[name] || '#94a3b8';
+    const rateColor = rate>=50 ? 'var(--green)' : rate>=25 ? 'var(--amber)' : 'var(--red)';
+    return `<tr>
+      <td><span style="display:inline-flex;align-items:center;gap:8px">
+        <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0"></span>
+        <strong>${name}</strong>
+      </span></td>
+      <td>${d.total}</td>
+      <td style="color:var(--green);font-weight:600">${d.won}</td>
+      <td style="color:var(--red)">${d.lost}</td>
+      <td style="font-weight:600;color:var(--teal)">${fmt$(d.premium)}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;max-width:100px;height:8px;background:var(--border);border-radius:4px">
+            <div style="height:8px;border-radius:4px;background:${rateColor};width:${rate}%"></div>
+          </div>
+          <span style="font-weight:700;color:${rateColor};min-width:36px">${rate}%</span>
+        </div>
+      </td>
+    </tr>`;}).join('')
+  : '<tr><td colspan="6" class="empty-state" style="padding:20px">No lead data yet</td></tr>';
   } catch(e){ document.getElementById('report-stats').innerHTML=`<div style="color:red;padding:16px">Reports error: ${e.message}</div>`; }
 }
 
@@ -3446,7 +3501,7 @@ function leadForm(d, defaultLeadType){
         <select class="form-input" id="l-lt" onchange="toggleCommercialFields()">${['Personal Lines','Winback','Quote Not Closed','Life Insurance','Commercial','Cross Sale'].map(x=>`<option${lt===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Lead Source</label>
-        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Permits'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Building Permit','Neighborhood Farming'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-row" id="referral-partner-row" style="display:${(ed?d.source:'Referral')==='Referral'?'flex':'none'}">
@@ -3631,7 +3686,7 @@ async function saveLead(id){
   else { const ref = await db.collection('leads').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()}); savedId = ref.id; toast('Lead added!'); logActivity('👤','#f1f5f9',`New lead: <b>${fn} ${ln}</b> — ${data.line} (${data.leadType})`); }
 
   // Auto-create follow-up tasks when lead moves to Quoted
-  // All sources (including Permits) use the same standard follow-up sequence.
+  // All sources (including Building Permit) use the same standard follow-up sequence.
   if(isNowQuoted && savedId){
     await createQuotedFollowUpTasks(savedId, data);
   }
