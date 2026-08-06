@@ -500,6 +500,9 @@ select.form-input{cursor:pointer}
           <button class="pipeline-tab" id="ptab-winbacks" onclick="switchPipelineTab(&#39;winbacks&#39;)">
             🔁 Winbacks <span class="ptab-count" id="ptab-winbacks-count"></span>
           </button>
+          <button class="pipeline-tab" id="ptab-qnc" onclick="switchPipelineTab(&#39;qnc&#39;)">
+            📋 Quote Not Closed <span class="ptab-count" id="ptab-qnc-count"></span>
+          </button>
           <button class="pipeline-tab" id="ptab-life" onclick="switchPipelineTab(&#39;life&#39;)">
             🛡 Life Insurance <span class="ptab-count" id="ptab-life-count"></span>
           </button>
@@ -2471,11 +2474,11 @@ let activePipelineTab = 'newleads';
 
 function switchPipelineTab(tab){
   activePipelineTab = tab;
-  ['newleads','winbacks','life','commercial','crosssell'].forEach(t=>{
+  ['newleads','winbacks','qnc','life','commercial','crosssell'].forEach(t=>{
     const btn = document.getElementById('ptab-'+t);
     if(btn) btn.className = 'pipeline-tab' + (t===tab?' active':'');
   });
-  ['ps-newleads','ps-winbacks','ps-life','ps-commercial','ps-crosssell'].forEach(id=>{
+  ['ps-newleads','ps-winbacks','ps-qnc','ps-life','ps-commercial','ps-crosssell'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.style.display = id==='ps-'+tab ? 'block' : 'none';
   });
@@ -2504,6 +2507,7 @@ function renderPipeline(){
   const tc = (id,n)=>{ const el=document.getElementById(id); if(el) el.textContent=n; };
   tc('ptab-newleads-count',  newLeads.length);
   tc('ptab-winbacks-count',  winbacks.length);
+  tc('ptab-qnc-count',       qncLeads.length);
   tc('ptab-life-count',      lifeLeads.length);
   tc('ptab-commercial-count',commLeads.length);
   const csTotal = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status)).length + csLeadLeads.length;
@@ -2538,6 +2542,7 @@ function renderPipeline(){
 
   buildBoard(newLeads,  'pipeline-newleads',  'ps-newleads-count',  'ps-newleads-total');
   buildBoard(winbacks,  'pipeline-winbacks',  'ps-winbacks-count',  'ps-winbacks-total');
+  buildBoard(qncLeads,  'pipeline-qnc',       'ps-qnc-count',       'ps-qnc-total');
   buildBoard(lifeLeads, 'pipeline-life',      'ps-life-count',      'ps-life-total');
   buildBoard(commLeads, 'pipeline-commercial','ps-commercial-count','ps-commercial-total');
 
