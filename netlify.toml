@@ -13,6 +13,9 @@
 [functions."daily-kpi-report"]
   schedule = "0 23 * * *"
 
+[functions."weekly-kpi-report"]
+  schedule = "0 23 * * 5"
+
 [functions."send-quoted-followup-emails"]
   schedule = "0 15 * * *"
 
