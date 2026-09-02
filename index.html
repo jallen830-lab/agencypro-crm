@@ -2633,6 +2633,7 @@ function renderPipeline(){
               <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(l.premium)}</span>
               <div style="display:flex;align-items:center;gap:4px">
                 <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
+                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();showLeadQuotes('${l.id}')" title="View/mark quotes">📋</button>
                 <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();deleteLead('${l.id}')" title="Delete this lead">🗑</button>
               </div>
             </div>
