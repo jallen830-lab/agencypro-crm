@@ -177,6 +177,21 @@ textarea.form-input{resize:vertical}
 .lnk{color:var(--teal);cursor:pointer;font-size:12px}
 .toast{position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transform:translateY(10px);transition:all .25s;pointer-events:none}
 .toast.show{opacity:1;transform:translateY(0)}
+
+/* CELEBRATION — fires for every connected user when a lead/cross-sell closes Won */
+.celebrate-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(15,31,61,.55);cursor:pointer;animation:celebrate-fade .3s ease}
+@keyframes celebrate-fade{from{opacity:0}to{opacity:1}}
+.confetti-field{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.confetti-piece{position:absolute;top:-20px;border-radius:2px;animation-name:confetti-fall;animation-timing-function:ease-in;animation-fill-mode:forwards}
+@keyframes confetti-fall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:.85}}
+.celebrate-card{background:#fff;border-radius:16px;padding:32px 44px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35);animation:celebrate-pop .45s cubic-bezier(.34,1.56,.64,1);max-width:90vw}
+@keyframes celebrate-pop{0%{transform:scale(.5);opacity:0}70%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+.celebrate-emoji{font-size:52px;line-height:1}
+.celebrate-title{font-size:26px;font-weight:900;color:var(--green);letter-spacing:1px;margin-top:6px}
+.celebrate-name{font-size:19px;font-weight:700;color:var(--text);margin-top:10px}
+.celebrate-detail{font-size:15px;color:var(--muted);margin-top:4px}
+.celebrate-producer{font-size:13px;font-weight:600;color:var(--teal);margin-top:14px}
+.celebrate-hint{font-size:11px;color:var(--muted);margin-top:16px;opacity:.7}
 .pipeline-tab{padding:10px 20px;border-radius:8px;border:2px solid var(--border);background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted);transition:all .18s;display:flex;align-items:center;gap:8px}
 .pipeline-tab:hover{border-color:var(--teal);color:var(--teal)}
 .pipeline-tab.active{background:var(--teal);color:#fff;border-color:var(--teal)}
@@ -1114,6 +1129,7 @@ function startListeners(){
     DB.activity=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(currentView==='dashboard') renderDashboard();
   });
+  startCelebrationListener();
   document.getElementById('sync-dot').className='sync-dot';
 }
 
@@ -1282,9 +1298,9 @@ function calcProducerStats(period){
     return {
       ...p,
       goal: folioGoal,
-      mtdPolicies: periodWon.reduce((s,l)=>s+leadPolicyCount(l),0),
+      mtdPolicies: periodWon.reduce((s,l)=>s+soldPolicyCount(l),0),
       mtdPremium:  periodWon.reduce((s,l)=>s+Number(l.premium||0),0),
-      allPolicies: allWon.reduce((s,l)=>s+leadPolicyCount(l),0),
+      allPolicies: allWon.reduce((s,l)=>s+soldPolicyCount(l),0),
       allPremium:  allWon.reduce((s,l)=>s+Number(l.premium||0),0),
       closeRate
     };
@@ -1295,6 +1311,15 @@ function calcProducerStats(period){
 // Falls back to 1 if no quotes array (legacy records)
 function leadPolicyCount(lead){
   if(lead.quotes && lead.quotes.length > 0) return lead.quotes.length;
+  return 1;
+}
+// Like leadPolicyCount, but excludes quotes explicitly marked 'not-sold' —
+// use this (not leadPolicyCount) anywhere you're counting CLOSED/SOLD policies,
+// since a lead can have some quotes sold and others declined (see markQuoteSold/
+// markQuoteNotSold). Unmarked quotes (no status field — legacy records, or a
+// quote nobody has flagged yet) still count, matching prior behavior.
+function soldPolicyCount(lead){
+  if(lead.quotes && lead.quotes.length > 0) return lead.quotes.filter(q=>q.status!=='not-sold').length;
   return 1;
 }
 
@@ -1323,6 +1348,81 @@ function agentInitials(id){ return agentName(id).split(' ').map(w=>w[0]).join(''
 function statusClass(s){ return {New:'badge-green',Contacted:'badge-amber',Quoted:'badge-blue','Closed Won':'badge-teal','Quote Not Closed':'badge-orange','Closed Lost':'badge-red',Uncontacted:'badge-gray'}[s]||'badge-gray'; }
 function priorityClass(p){ return {high:'badge-red',medium:'badge-amber',low:'badge-gray'}[p]||'badge-gray'; }
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2800); }
+
+// ── CLOSED WON CELEBRATION — broadcasts to every connected user in real time ──
+// Pattern: writer adds a doc to `celebrations`; every client (including the writer)
+// picks it up via the shared onSnapshot listener in startListeners() and fires the
+// confetti overlay locally. `celebrationsReady`/`seenCelebrationIds` exist purely to
+// stop the initial page-load snapshot (which returns existing docs) from replaying
+// old celebrations — only *newly added* docs after that first snapshot fire the UI.
+let celebrationsReady = false;
+const seenCelebrationIds = new Set();
+
+async function broadcastCelebration({producerName, customerName, line, premium}){
+  try{
+    await db.collection('celebrations').add({producerName:producerName||'', customerName:customerName||'', line:line||'', premium:Number(premium)||0, ts:Date.now()});
+    // Opportunistic cleanup so the collection never needs its own scheduled job —
+    // whoever fires the next celebration also sweeps anything older than a day.
+    const stale = await db.collection('celebrations').where('ts','<',Date.now()-86400000).get();
+    if(!stale.empty){ const batch=db.batch(); stale.forEach(d=>batch.delete(d.ref)); await batch.commit(); }
+  }catch(e){ console.warn('Could not broadcast celebration:', e); }
+}
+
+function startCelebrationListener(){
+  db.collection('celebrations').orderBy('ts','desc').limit(5).onSnapshot(snap=>{
+    const isFirstLoad = !celebrationsReady;
+    celebrationsReady = true;
+    snap.docChanges().forEach(change=>{
+      if(change.type!=='added') return;
+      if(seenCelebrationIds.has(change.doc.id)) return;
+      seenCelebrationIds.add(change.doc.id);
+      if(isFirstLoad) return; // don't replay history that already happened before this tab opened
+      fireCelebration(change.doc.data());
+    });
+  });
+}
+
+function playCelebrationChime(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    [523.25,659.25,783.99,1046.5].forEach((freq,i)=>{ // C5 E5 G5 C6 — quick ascending "cha-ching"
+      const osc=ctx.createOscillator(), gain=ctx.createGain();
+      osc.type='sine'; osc.frequency.value=freq;
+      osc.connect(gain); gain.connect(ctx.destination);
+      const start=ctx.currentTime+i*0.12;
+      gain.gain.setValueAtTime(0.0001,start);
+      gain.gain.exponentialRampToValueAtTime(0.15,start+0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001,start+0.3);
+      osc.start(start); osc.stop(start+0.32);
+    });
+  }catch(e){ /* autoplay blocked or unsupported — confetti still shows without sound */ }
+}
+
+function fireCelebration({producerName, customerName, line, premium}){
+  playCelebrationChime();
+  const colors=['#0ea5a0','#f59e0b','#22c55e','#8b5cf6','#ef4444','#0f1f3d'];
+  let confetti='';
+  for(let i=0;i<90;i++){
+    const left=Math.random()*100, delay=Math.random()*0.6, dur=2.6+Math.random()*1.8;
+    const w=6+Math.random()*8, rot=Math.random()*360, color=colors[i%colors.length];
+    confetti+=`<div class="confetti-piece" style="left:${left}%;background:${color};width:${w}px;height:${w*0.4}px;animation-delay:${delay}s;animation-duration:${dur}s;transform:rotate(${rot}deg)"></div>`;
+  }
+  const overlay=document.createElement('div');
+  overlay.className='celebrate-overlay';
+  overlay.onclick=()=>overlay.remove();
+  const premiumStr = premium ? '$'+Number(premium).toLocaleString('en-US') : '';
+  overlay.innerHTML=`<div class="confetti-field">${confetti}</div>
+    <div class="celebrate-card" onclick="event.stopPropagation()">
+      <div class="celebrate-emoji">🎉</div>
+      <div class="celebrate-title">CLOSED WON!</div>
+      <div class="celebrate-name">${customerName||'A new customer'}</div>
+      <div class="celebrate-detail">${[line,premiumStr].filter(Boolean).join(' · ')}</div>
+      <div class="celebrate-producer">🏆 ${producerName||'The team'} closed the deal!</div>
+      <div class="celebrate-hint">Click anywhere to dismiss</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(()=>overlay.remove(),5500);
+}
 function applySettings(){
   const n=DB.settings.ownerName||'Agency Owner';
   const el=document.getElementById('owner-name'); if(el)el.textContent=n;
@@ -2439,7 +2539,7 @@ function renderLeads(){
       <td><span class="badge ${statusClass(l.status)}">${l.status}</span></td>
       <td style="font-weight:600;color:var(--teal)">${fmt$(l.premium)}</td>
       <td style="color:var(--muted)">${fmtDate(l.date)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="showLeadQuotes('${l.id}')">📋 Quotes</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
     </tr>`).join(''):'<tr><td colspan="8" class="empty-state">No leads match your filters</td></tr>';
 }
 async function deleteLead(id){
@@ -2785,7 +2885,7 @@ function renderScoreboard(){
         return d >= folio2.periodStart && d <= folioEnd2;
       }).sort((a,b) => (b.closedDate||b.date||'').localeCompare(a.closedDate||a.date||''));
 
-      const folioPolicyTotal = folioWon.reduce((s,l)=>s+leadPolicyCount(l),0);
+      const folioPolicyTotal = folioWon.reduce((s,l)=>s+soldPolicyCount(l),0);
       if(folioCountEl) folioCountEl.textContent = folioPolicyTotal + ' polic' + (folioPolicyTotal===1?'y':'ies');
       if(folioLabelEl) folioLabelEl.textContent = folio2.label;
 
@@ -2830,7 +2930,8 @@ function renderScoreboard(){
                 return leads.map((l,i) => {
                   const isCrossSell = !!l.crossSellRef;
                   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
-                  const policies = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line||'—',carrier:l.carrier||'—',premium:l.premium||0}];
+                  const soldOnly = (l.quotes||[]).filter(q=>q.status!=='not-sold');
+                  const policies = soldOnly.length ? soldOnly : (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line||'—',carrier:l.carrier||'—',premium:l.premium||0}];
                   const isFirst = i===0;
                   return policies.map((q,qi) => {
                     return `<tr style="border-bottom:1px solid var(--border);${isFirst&&qi===0?'border-top:2px solid var(--border)':''}">
@@ -3653,6 +3754,75 @@ function collectQuotes(){
   })).filter(q=>q.carrier||q.premium||q.currentCarrier||q.renewalDate);
 }
 
+// ── PER-QUOTE SOLD / NOT SOLD ─────────────────────────────────────────
+// A lead can have multiple quotes (one per line of business) that close
+// independently — e.g. Auto sells, Home doesn't. Each quote gets its own
+// status ('sold' | 'not-sold' | unset/open) instead of relying solely on
+// the lead's overall status. Marking a quote Sold closes the lead (if not
+// already) so the customer shows up correctly; marking Not Sold leaves the
+// rest of the lead untouched and auto-drops just that line into the
+// existing Remarketing sequence (Month 3/6/9) so it keeps getting worked
+// without needing a duplicate lead record.
+function showLeadQuotes(leadId){
+  const lead = DB.leads.find(l=>l.id===leadId);
+  if(!lead) return;
+  const name = `${lead.firstName||''} ${lead.lastName||''}`.trim();
+  const quotes = lead.quotes && lead.quotes.length ? lead.quotes : [{line:lead.line,carrier:lead.carrier,premium:lead.premium}];
+  const statusBadge = q => {
+    if(q.status==='sold') return `<span class="badge badge-green">✅ Sold</span>`;
+    if(q.status==='not-sold') return `<span class="badge badge-gray">✕ Not Sold — in Remarketing</span>`;
+    return `<span class="badge badge-blue">Open</span>`;
+  };
+  const html = `<div class="modal-title">📋 Quotes — ${name}</div>
+    <div style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto">
+      ${quotes.map((q,i)=>`
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:140px">
+            <div style="font-weight:600;font-size:13px">${q.line||'—'}${q.carrier?` — ${q.carrier}`:''}</div>
+            <div style="font-size:12px;color:var(--muted)">${fmt$(q.premium||0)}${q.currentCarrier?` &bull; was with ${q.currentCarrier}`:''}</div>
+          </div>
+          ${statusBadge(q)}
+          ${(!q.status) ? `
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-primary btn-sm" onclick="markQuoteSold('${leadId}',${i})">✅ Sold</button>
+              <button class="btn btn-ghost btn-sm" onclick="markQuoteNotSold('${leadId}',${i})">✕ Not Sold</button>
+            </div>` : ''}
+        </div>`).join('')}
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('modal-content').innerHTML = html;
+}
+
+async function markQuoteSold(leadId, quoteIndex){
+  const lead = DB.leads.find(l=>l.id===leadId);
+  if(!lead || !lead.quotes || !lead.quotes[quoteIndex]) return;
+  const quotes = lead.quotes.map((q,i)=> i===quoteIndex ? {...q, status:'sold'} : q);
+  const premium = quotes.filter(q=>q.status!=='not-sold').reduce((s,q)=>s+Number(q.premium||0),0);
+  const update = { quotes, premium };
+  if(lead.status !== 'Closed Won'){
+    update.status = 'Closed Won';
+    update.closedDate = new Date().toISOString().slice(0,10);
+  }
+  await db.collection('leads').doc(leadId).update(update);
+  logActivity('✅','#dcfce7',`${quotes[quoteIndex].line||'Policy'} marked sold for <b>${lead.firstName} ${lead.lastName}</b>`);
+  toast('✅ Marked sold!');
+  showLeadQuotes(leadId);
+}
+
+async function markQuoteNotSold(leadId, quoteIndex){
+  const lead = DB.leads.find(l=>l.id===leadId);
+  if(!lead || !lead.quotes || !lead.quotes[quoteIndex]) return;
+  const line = lead.quotes[quoteIndex].line || 'Insurance';
+  const quotes = lead.quotes.map((q,i)=> i===quoteIndex ? {...q, status:'not-sold'} : q);
+  const premium = quotes.filter(q=>q.status!=='not-sold').reduce((s,q)=>s+Number(q.premium||0),0);
+  await db.collection('leads').doc(leadId).update({ quotes, premium });
+  await createRemarketingTouchpointTasks(leadId, {...lead, line});
+  logActivity('🔄','#ede9fe',`${line} quote for <b>${lead.firstName} ${lead.lastName}</b> marked not sold — moved to Remarketing`);
+  toast(`Marked not sold — ${line} added to Remarketing`);
+  showLeadQuotes(leadId);
+}
+
 async function saveLead(id){
   const fn=document.getElementById('l-fn').value.trim(),ln=document.getElementById('l-ln').value.trim();
   if(!fn||!ln){alert('First and last name are required');return;}
@@ -3707,6 +3877,11 @@ async function saveLead(id){
   // Auto-cancel open quoted follow-up tasks when lead leaves Quoted stage
   if(isLeavingQuoted && savedId){
     await cancelQuotedFollowUpTasks(savedId, data.status);
+  }
+
+  // Newly Closed Won — celebrate for everyone currently in the CRM
+  if(isNowClosed){
+    broadcastCelebration({producerName:getProducerName(data.agentId), customerName:`${fn} ${ln}`, line:data.line, premium:data.premium});
   }
 
   // First time this lead is linked to a referral partner, log it in that
@@ -3798,14 +3973,14 @@ async function saveLeadTask(leadId){
 
 // ── QUOTED FOLLOW-UP AUTOMATION ──────────────────────────────────────
 const QUOTED_FOLLOWUP_TEMPLATES = [
-  { daysOut: 0,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 0 — Call ${name} to deliver the ${line} quote. Walk through coverage, answer questions, attempt to close.` },
-  { daysOut: 1,  priority: 'high',   taskType: 'text',  text: (name, line) => `💬 Day 1 — Text ${name}: confirm the ${line} quote arrived, invite questions, keep it brief and friendly.` },
-  { daysOut: 3,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 3 — Call ${name} to follow up on the ${line} quote. Did they review it? Walk highlights, handle objections, close attempt.` },
-  { daysOut: 3,  priority: 'medium', taskType: 'email', autoSend: true, text: (name, line) => `📧 Day 3 — Value email auto-sent to ${name} (sent automatically at 9am Central)` },
-  { daysOut: 7,  priority: 'high',   taskType: 'call',  text: (name, line) => `📞 Day 7 — Call ${name} for a decision check-in on the ${line} quote. Address competing quotes, pricing concerns, create urgency.` },
-  { daysOut: 10, priority: 'medium', taskType: 'call',  text: (name, line) => `📞 Day 10 — Final push call with ${name} on the ${line} quote. Respectful, no-pressure, last close attempt.` },
-  { daysOut: 10, priority: 'medium', taskType: 'email', autoSend: true, text: (name, line) => `📧 Day 10 — Last-attempt email auto-sent to ${name} (sent automatically at 9am Central)` },
-  { daysOut: 14, priority: 'low',    taskType: 'text',  text: (name, line) => `💬 Day 14 — Final text to ${name} re: ${line} quote. Thank them either way, leave the door open, close the loop.` },
+  { key: 'q_day0_call',  daysOut: 0,  priority: 'high',   taskType: 'call',  label: 'Day 0 — Quote Delivery Call',        text: (name, line) => `📞 Day 0 — Call ${name} to deliver the ${line} quote. Walk through coverage, answer questions, attempt to close.` },
+  { key: 'q_day1_text',  daysOut: 1,  priority: 'high',   taskType: 'text',  label: 'Day 1 — Confirmation Text',          text: (name, line) => `💬 Day 1 — Text ${name}: confirm the ${line} quote arrived, invite questions, keep it brief and friendly.` },
+  { key: 'q_day3_call',  daysOut: 3,  priority: 'high',   taskType: 'call',  label: 'Day 3 — Check-In Call',              text: (name, line) => `📞 Day 3 — Call ${name} to follow up on the ${line} quote. Did they review it? Walk highlights, handle objections, close attempt.` },
+  { key: 'q_day3_email', daysOut: 3,  priority: 'medium', taskType: 'email', autoSend: true, label: 'Day 3 — Value Email (auto-sent)',       text: (name, line) => `📧 Day 3 — Value email auto-sent to ${name} (sent automatically at 9am Central)` },
+  { key: 'q_day7_call',  daysOut: 7,  priority: 'high',   taskType: 'call',  label: 'Day 7 — Decision Check-In Call',     text: (name, line) => `📞 Day 7 — Call ${name} for a decision check-in on the ${line} quote. Address competing quotes, pricing concerns, create urgency.` },
+  { key: 'q_day10_call', daysOut: 10, priority: 'medium', taskType: 'call',  label: 'Day 10 — Final Push Call',           text: (name, line) => `📞 Day 10 — Final push call with ${name} on the ${line} quote. Respectful, no-pressure, last close attempt.` },
+  { key: 'q_day10_email',daysOut: 10, priority: 'medium', taskType: 'email', autoSend: true, label: 'Day 10 — Last-Attempt Email (auto-sent)', text: (name, line) => `📧 Day 10 — Last-attempt email auto-sent to ${name} (sent automatically at 9am Central)` },
+  { key: 'q_day14_text', daysOut: 14, priority: 'low',    taskType: 'text',  label: 'Day 14 — Final Text',                text: (name, line) => `💬 Day 14 — Final text to ${name} re: ${line} quote. Thank them either way, leave the door open, close the loop.` },
 ];
 
 // ── QUOTED FOLLOW-UP SCRIPT LIBRARY ─────────────────────────────────
@@ -3987,7 +4162,13 @@ async function createQuotedFollowUpTasks(leadId, leadData){
   const line = leadData.line || 'Insurance';
   const agentId = leadData.agentId || '';
   const today = new Date();
-  const tasks = QUOTED_FOLLOWUP_TEMPLATES.map(t => {
+  const disabledSteps = DB.settings.disabledQuotedSteps || [];
+  const activeTemplates = QUOTED_FOLLOWUP_TEMPLATES.filter(t => !disabledSteps.includes(t.key));
+  if(!activeTemplates.length){
+    toast('⚠️ All quoted follow-up steps are turned off in Settings — no tasks created');
+    return;
+  }
+  const tasks = activeTemplates.map(t => {
     const due = new Date(today);
     due.setDate(today.getDate() + t.daysOut);
     const dueStr = due.toISOString().slice(0,10);
@@ -4003,6 +4184,7 @@ async function createQuotedFollowUpTasks(leadId, leadData){
       sequenceDay: t.daysOut,
       taskType: t.taskType,
       autoSend: t.autoSend || false,
+      stepKey: t.key,
       type: 'quoted-followup',
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
@@ -4389,16 +4571,28 @@ async function saveRenewal(id){
 
 function settingsForm(){
   const s=DB.settings;
+  const disabledSteps = s.disabledQuotedSteps || [];
   return `<div class="modal-title">⚙ Agency Settings</div>
     <div class="form-group"><label class="form-label">Agency / Owner Name</label><input class="form-input" id="s-nm" value="${s.ownerName}"></div>
     <div class="form-group"><label class="form-label">Report Email Address</label><input class="form-input" id="s-email" type="email" value="${s.reportEmail||''}" placeholder="jallen1@farmersagent.com"></div>
     <div class="form-group"><label class="form-label">Monthly Policy Goal (# of policies)</label><input class="form-input" id="s-gp" type="number" value="${s.goalPolicies}"></div>
     <div class="form-group"><label class="form-label">Monthly Premium Goal ($)</label><input class="form-input" id="s-gpr" type="number" value="${s.goalPremium}"></div>
     <div class="form-group"><label class="form-label">Retention Rate Goal (%)</label><input class="form-input" id="s-gr" type="number" value="${s.goalRetention}"></div>
+    <div style="border-top:1px solid var(--border);margin:16px 0 12px"></div>
+    <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Quoted Lead Follow-Up Automation</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Uncheck any step you don't want created when a lead moves to <b>Quoted</b>. Steps marked "auto-sent" send an email automatically — unchecking those stops the email but leaves the rest of the sequence alone.</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${QUOTED_FOLLOWUP_TEMPLATES.map(t=>`
+        <label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer">
+          <input type="checkbox" class="s-qstep" value="${t.key}" ${disabledSteps.includes(t.key)?'':'checked'}>
+          <span>${t.label}${t.autoSend?' <span style="color:var(--muted);font-size:11px">(auto-sent)</span>':''}</span>
+        </label>`).join('')}
+    </div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div>`;
 }
 async function saveSettings(){
-  const s={ownerName:document.getElementById('s-nm').value.trim()||'Agency Owner',reportEmail:document.getElementById('s-email')?.value.trim()||'jallen1@farmersagent.com',goalPolicies:Number(document.getElementById('s-gp').value)||60,goalPremium:Number(document.getElementById('s-gpr').value)||100000,goalRetention:Number(document.getElementById('s-gr').value)||95};
+  const disabledQuotedSteps = Array.from(document.querySelectorAll('.s-qstep')).filter(cb=>!cb.checked).map(cb=>cb.value);
+  const s={ownerName:document.getElementById('s-nm').value.trim()||'Agency Owner',reportEmail:document.getElementById('s-email')?.value.trim()||'jallen1@farmersagent.com',goalPolicies:Number(document.getElementById('s-gp').value)||60,goalPremium:Number(document.getElementById('s-gpr').value)||100000,goalRetention:Number(document.getElementById('s-gr').value)||95,disabledQuotedSteps};
   await db.collection('settings').doc('agency').set(s,{merge:true});
   toast('Settings saved'); closeModal();
 }
@@ -4739,6 +4933,9 @@ async function saveCrossSell(id){
   if(isNewlyClosed){
     const today = new Date().toISOString().slice(0,10);
     const custName = data.customerName || 'Customer';
+
+    // Celebrate for everyone currently in the CRM
+    broadcastCelebration({producerName:getProducerName(data.agentId), customerName:custName, line:data.line, premium:data.premium});
 
     // ── PRODUCTION RECORD — created regardless of whether customer is in DB cache ──
     await db.collection('leads').add({
