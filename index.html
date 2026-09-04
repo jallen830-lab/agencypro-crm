@@ -810,6 +810,15 @@ select.form-input{cursor:pointer}
           </div>
         </div>
 
+        <!-- PRIME SCORECARD -->
+        <div class="card" style="margin-top:14px">
+          <div class="card-header">
+            <div class="card-title">🎯 Prime Scorecard — YTD <span id="prime-year"></span></div>
+            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB — enter Farmers' official YTD targets from each Prime Scorecard report</div>
+          </div>
+          <div id="prime-scorecard-content"></div>
+        </div>
+
         <!-- Folio Closed Business List -->
         <div class="card" style="margin-top:14px">
           <div class="card-header">
@@ -3064,6 +3073,114 @@ function renderScoreboard(){
     if(scoreList) scoreList.innerHTML += `<div style="color:red;padding:10px">Table error: ${e.message}</div>`;
     if(tbody) tbody.innerHTML=`<tr><td colspan="7" style="color:red;padding:16px">Table error: ${e.message}</td></tr>`;
   }
+
+  // Stage 6 — Prime Scorecard
+  try { renderPrimeScorecard(); } catch(e){ console.error('Prime Scorecard error:',e); }
+}
+
+// ── PRIME SCORECARD (Farmers' point-based agent scoring) ──────────────
+// Tracks the 3 KPIs the CRM can actually compute from its own data —
+// PL & Specialty NB, Life I&P, BI NB — out of the 8 on Farmers' real
+// Prime Scorecard (the other 5, incl. Premium Growth, depend on data the
+// CRM doesn't have: claims/loss ratios, FFS accounts, staff licensing).
+// Targets are entered manually per producer (producers.primeTargets),
+// since Farmers calculates them internally per agent — same pattern as
+// the existing folioGoals. Points formula mirrors Farmers' own:
+// points_achieved = points_possible × min(YTD actual / YTD target, 100%).
+const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
+const PRIME_KPI_DEFS = [
+  { key:'plSpecialty', field:'plSpecialtyNB', label:'PL & Specialty NB', points:3.00, color:'#0ea5a0' },
+  { key:'lifeIP',      field:'lifeIP',        label:'Life I&P',          points:1.00, color:'#8b5cf6' },
+  { key:'biNB',        field:'biNB',          label:'BI NB',             points:1.00, color:'#f59e0b' },
+];
+function primeAchievementLevel(pct){
+  if(pct>=70) return {label:'Prime',   color:'#8b5cf6'};
+  if(pct>=55) return {label:'★★★★★',  color:'#22c55e'};
+  if(pct>=40) return {label:'★★★★',   color:'#0ea5a0'};
+  if(pct>=25) return {label:'★★★',    color:'#f59e0b'};
+  if(pct>=10) return {label:'★★',     color:'#f97316'};
+  return             {label:'★',      color:'#ef4444'};
+}
+// YTD (calendar year) counts of new-business policies by KPI bucket, sold quotes only
+function primeYTDCounts(producerId){
+  const year = String(new Date().getFullYear());
+  const counts = { plSpecialty:0, lifeIP:0, biNB:0 };
+  DB.leads.forEach(l=>{
+    if(l.agentId!==producerId || l.status!=='Closed Won') return;
+    if(l.customerType==='existing' && !l.crossSellRef) return; // new business only, matches calcProducerStats convention
+    const closedDate = l.closedDate || l.date || '';
+    if(!closedDate.startsWith(year)) return;
+    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line}];
+    quotes.forEach(q=>{
+      if(q.status==='not-sold') return;
+      const line = q.line || l.line;
+      if(line==='Life') counts.lifeIP++;
+      else if(line==='Commercial') counts.biNB++;
+      else if(PL_SPECIALTY_LINES.includes(line)) counts.plSpecialty++;
+    });
+  });
+  return counts;
+}
+function calcPrimeScorecard(producer){
+  const counts = primeYTDCounts(producer.id);
+  const targets = producer.primeTargets || {};
+  const kpis = PRIME_KPI_DEFS.map(def=>{
+    const actual = counts[def.key];
+    const target = Number(targets[def.field])||0;
+    const pctToTarget = target>0 ? Math.min(actual/target,1) : 0;
+    return { ...def, actual, target, pctToTarget, pointsAchieved: def.points*pctToTarget };
+  });
+  const totalPossible = kpis.reduce((s,k)=>s+k.points,0);
+  const totalAchieved  = kpis.reduce((s,k)=>s+k.pointsAchieved,0);
+  const pctOfPoints = totalPossible>0 ? (totalAchieved/totalPossible)*100 : 0;
+  return { kpis, totalPossible, totalAchieved, pctOfPoints, level: primeAchievementLevel(pctOfPoints) };
+}
+function renderPrimeScorecard(){
+  const el = document.getElementById('prime-scorecard-content');
+  if(!el) return;
+  const yearEl = document.getElementById('prime-year');
+  if(yearEl) yearEl.textContent = new Date().getFullYear();
+  if(!DB.producers.length){
+    el.innerHTML = '<div class="empty-state" style="padding:16px">No producers yet.</div>';
+    return;
+  }
+  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;padding:12px">
+    ${DB.producers.map(p=>{
+      const sc = calcPrimeScorecard(p);
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:10px;height:10px;border-radius:50%;background:${p.color||'#94a3b8'};display:inline-block"></span>
+            <strong style="font-size:13px">${p.name}</strong>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:var(--muted)">${sc.totalAchieved.toFixed(2)} / ${sc.totalPossible.toFixed(2)} pts &bull; ${sc.pctOfPoints.toFixed(1)}%</span>
+            <span style="background:${sc.level.color}22;color:${sc.level.color};padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">${sc.level.label}</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+          ${sc.kpis.map(k=>`
+            <div style="background:#f8fafc;border-radius:8px;padding:8px 10px">
+              <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">${k.label}</div>
+              <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px">
+                <span style="font-size:16px;font-weight:700;color:var(--text)">${k.actual}</span>
+                <span style="font-size:11px;color:var(--muted)">/</span>
+                <input type="number" value="${k.target||''}" placeholder="target" style="width:56px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;font-size:11px"
+                  onchange="setPrimeTarget('${p.id}','${k.field}',this.value)">
+              </div>
+              <div style="background:var(--border);border-radius:3px;height:5px;overflow:hidden;margin-bottom:2px">
+                <div style="height:5px;border-radius:3px;background:${k.color||'#0ea5a0'};width:${Math.round(k.pctToTarget*100)}%"></div>
+              </div>
+              <div style="font-size:10px;color:var(--muted)">${k.pointsAchieved.toFixed(2)} / ${k.points.toFixed(2)} pts</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+async function setPrimeTarget(producerId, field, value){
+  await db.collection('producers').doc(producerId).update({ [`primeTargets.${field}`]: Number(value)||0 });
+  toast('Target updated');
 }
 
 function editProducer(id){
