@@ -441,34 +441,6 @@ select.form-input{cursor:pointer}
     </div></div>
           </div>
         </div>
-        <div class="card">
-          <div class="card-header"><div class="card-title">Monthly Goals</div><span class="lnk" onclick="openModal(&#39;settings&#39;)">Edit goals</span></div>
-          <div class="goals-grid" id="goals-grid"><div class="ring-wrap">
-      <svg width="86" height="86" viewBox="0 0 86 86">
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#e2e8f0" stroke-width="7"></circle>
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#0ea5a0" stroke-width="7" stroke-dasharray="146 214" stroke-linecap="round" transform="rotate(-90 43 43)"></circle>
-        <text x="43" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#0ea5a0" font-family="Segoe UI,Arial,sans-serif">68%</text>
-        <text x="43" y="54" text-anchor="middle" font-size="9" fill="#64748b" font-family="Segoe UI,Arial,sans-serif">17</text>
-      </svg>
-      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.4"><b>Policies</b><br>Goal: 25</div>
-    </div><div class="ring-wrap">
-      <svg width="86" height="86" viewBox="0 0 86 86">
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#e2e8f0" stroke-width="7"></circle>
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#8b5cf6" stroke-width="7" stroke-dasharray="214 214" stroke-linecap="round" transform="rotate(-90 43 43)"></circle>
-        <text x="43" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#8b5cf6" font-family="Segoe UI,Arial,sans-serif">100%</text>
-        <text x="43" y="54" text-anchor="middle" font-size="9" fill="#64748b" font-family="Segoe UI,Arial,sans-serif">$59,911.65</text>
-      </svg>
-      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.4"><b>Premium</b><br>Goal: $40,000</div>
-    </div><div class="ring-wrap">
-      <svg width="86" height="86" viewBox="0 0 86 86">
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#e2e8f0" stroke-width="7"></circle>
-        <circle cx="43" cy="43" r="34" fill="none" stroke="#22c55e" stroke-width="7" stroke-dasharray="178 214" stroke-linecap="round" transform="rotate(-90 43 43)"></circle>
-        <text x="43" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#22c55e" font-family="Segoe UI,Arial,sans-serif">83%</text>
-        <text x="43" y="54" text-anchor="middle" font-size="9" fill="#64748b" font-family="Segoe UI,Arial,sans-serif">79%</text>
-      </svg>
-      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.4"><b>Retention</b><br>Goal: 95%</div>
-    </div></div>
-        </div>
       </div>
 
       <!-- LEADS -->
@@ -760,6 +732,19 @@ select.form-input{cursor:pointer}
           ✅ <strong>Scoreboard auto-calculates</strong> from your actual Closed Won leads in real time — no manual entry needed.
         </div>
 
+        <!-- AGENCY GOALS -->
+        <div style="font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.6px;margin:4px 0 10px">🏢 Agency Goals</div>
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div class="card-title">🎯 Agency Goals — <span id="prime-folio-label"></span></div>
+            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB &bull; Farmers policies only — producers must enter "Farmers" as the Carrier on each quote for it to count here</div>
+          </div>
+          <div id="prime-scorecard-content"></div>
+        </div>
+
+        <!-- PRODUCER GOALS -->
+        <div style="font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.6px;margin:4px 0 10px">👤 Producer Goals</div>
+
         <!-- FOLIO GOAL TRACKER -->
         <div class="card" style="margin-bottom:14px">
           <div class="card-header">
@@ -808,15 +793,6 @@ select.form-input{cursor:pointer}
               <tbody id="producers-tbody"></tbody>
             </table>
           </div>
-        </div>
-
-        <!-- PRIME SCORECARD -->
-        <div class="card" style="margin-top:14px">
-          <div class="card-header">
-            <div class="card-title">🎯 Prime Scorecard — <span id="prime-month"></span></div>
-            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB — enter Farmers' official Monthly Targets for the current month</div>
-          </div>
-          <div id="prime-scorecard-content"></div>
         </div>
 
         <!-- Folio Closed Business List -->
@@ -2490,27 +2466,6 @@ function renderDashboard(){
       <div style="color:var(--muted);font-size:11px;white-space:nowrap">${a.time}</div>
     </div>`).join('')||'<div class="empty-state">No recent activity</div>';
 
-  const s=DB.settings;
-  const goalsData=[
-    {label:'Policies',current:won.length,target:s.goalPolicies,color:'#0ea5a0'},
-    {label:'Premium',current:mtdPremium,target:s.goalPremium,color:'#8b5cf6'},
-    {label:'Retention',current:ret,target:s.goalRetention,color:'#22c55e'},
-  ];
-  document.getElementById('goals-grid').innerHTML=goalsData.map(g=>{
-    const pct=Math.min(100,Math.round((g.current/Math.max(g.target,1))*100));
-    const r=34,circ=Math.round(2*Math.PI*r),dash=Math.round((pct/100)*circ);
-    const fmt=g.label==='Premium'?fmt$(g.current):(g.current+(g.label==='Retention'?'%':''));
-    const tgt=g.label==='Premium'?fmt$(g.target):(g.target+(g.label==='Retention'?'%':''));
-    return `<div class="ring-wrap">
-      <svg width="86" height="86" viewBox="0 0 86 86">
-        <circle cx="43" cy="43" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="7"/>
-        <circle cx="43" cy="43" r="${r}" fill="none" stroke="${g.color}" stroke-width="7" stroke-dasharray="${dash} ${circ}" stroke-linecap="round" transform="rotate(-90 43 43)"/>
-        <text x="43" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="${g.color}" font-family="Segoe UI,Arial,sans-serif">${pct}%</text>
-        <text x="43" y="54" text-anchor="middle" font-size="9" fill="#64748b" font-family="Segoe UI,Arial,sans-serif">${fmt}</text>
-      </svg>
-      <div style="font-size:11px;color:var(--muted);text-align:center;line-height:1.4"><b>${g.label}</b><br>Goal: ${tgt}</div>
-    </div>`;}).join('');
-
   const upcoming=DB.renewals.filter(r=>{ const d=daysUntil(r.renewDate); return d>=0&&d<=30; }).sort((a,b)=>a.renewDate.localeCompare(b.renewDate)).slice(0,4);
   document.getElementById('mini-renewals').innerHTML=upcoming.length?upcoming.map(r=>{
     const sd=shortDate(r.renewDate).split(' ');
@@ -3078,45 +3033,44 @@ function renderScoreboard(){
   try { renderPrimeScorecard(); } catch(e){ console.error('Prime Scorecard error:',e); }
 }
 
-// ── PRIME SCORECARD (Farmers' point-based agency scoring) ─────────────
-// Tracks the 3 KPIs the CRM can actually compute from its own data —
-// PL & Specialty NB, Life I&P, BI NB — out of the 8 on Farmers' real
-// Prime Scorecard (the other 5, incl. Premium Growth, depend on data the
-// CRM doesn't have: claims/loss ratios, FFS accounts, staff licensing).
-// Combined agency-wide (not per-producer) — individual producer goals
-// already exist elsewhere (folioGoals, Monthly Premium Goal). Tracks by
-// CALENDAR MONTH (not YTD) to match Farmers' own "Monthly Targets" table —
-// targets are entered manually per month (settings.agency.primeTargets,
-// keyed "YYYY-MM"), since Farmers calculates them internally, not
-// something the CRM can derive. Points formula mirrors Farmers' own:
-// points_achieved = points_possible × min(month actual / month target, 100%).
+// ── AGENCY GOALS (Farmers Prime KPIs, folio-period, Farmers carrier only) ──
+// Tracks 3 of Farmers' own "Prime Scorecard" KPIs — PL & Specialty NB,
+// Life I&P, BI NB — the ones this CRM can actually compute (the other 5,
+// incl. Premium Growth, depend on data the CRM doesn't have: claims/loss
+// ratios, FFS accounts, staff licensing). Combined agency-wide, tracked
+// per FOLIO PERIOD (matches how the rest of the Scoreboard already works,
+// and Jason's own "monthly folio goal" framing) — NOT calendar month.
+// Fixed standing targets (settings.agency.primeTargets.{field}, flat, not
+// re-entered each period) — default 27 PL&Specialty / 2 Life / 2
+// Commercial per folio. Individual producer goals live in the Producer
+// Goals section below (folioGoals) — this section is agency-wide only.
+// Only counts policies where the quote's Carrier is Farmers — producers
+// must type "Farmers" in the Carrier field for a quote to count here.
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const PRIME_KPI_DEFS = [
-  { key:'plSpecialty', field:'plSpecialtyNB', label:'PL & Specialty NB', points:3.00, color:'#0ea5a0' },
-  { key:'lifeIP',      field:'lifeIP',        label:'Life I&P',          points:1.00, color:'#8b5cf6' },
-  { key:'biNB',        field:'biNB',          label:'BI NB',             points:1.00, color:'#f59e0b' },
+  { key:'plSpecialty', field:'plSpecialtyNB', label:'PL & Specialty NB', color:'#0ea5a0' },
+  { key:'lifeIP',      field:'lifeIP',        label:'Life I&P',          color:'#8b5cf6' },
+  { key:'biNB',        field:'biNB',          label:'BI NB',             color:'#f59e0b' },
 ];
-function primeAchievementLevel(pct){
-  if(pct>=70) return {label:'Prime',   color:'#8b5cf6'};
-  if(pct>=55) return {label:'★★★★★',  color:'#22c55e'};
-  if(pct>=40) return {label:'★★★★',   color:'#0ea5a0'};
-  if(pct>=25) return {label:'★★★',    color:'#f59e0b'};
-  if(pct>=10) return {label:'★★',     color:'#f97316'};
-  return             {label:'★',      color:'#ef4444'};
+function isFarmersCarrier(carrier){
+  return String(carrier||'').toLowerCase().includes('farmers');
 }
-function currentPrimeMonthKey(){ return new Date().toISOString().slice(0,7); } // "YYYY-MM"
-// Current-calendar-month agency-wide counts of new-business policies by KPI bucket, sold quotes only
-function primeMonthCounts(){
-  const monthKey = currentPrimeMonthKey();
+// Current-folio-period agency-wide counts of Farmers new-business policies by KPI bucket, sold quotes only
+function primeFolioCounts(){
+  const folio = getCurrentFolioPeriod();
+  const end = new Date(folio.periodEnd); end.setHours(23,59,59,999);
   const counts = { plSpecialty:0, lifeIP:0, biNB:0 };
   DB.leads.forEach(l=>{
     if(l.status!=='Closed Won') return;
     if(l.customerType==='existing' && !l.crossSellRef) return; // new business only, matches calcProducerStats convention
     const closedDate = l.closedDate || l.date || '';
-    if(!closedDate.startsWith(monthKey)) return;
-    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line}];
+    if(!closedDate) return;
+    const d = new Date(closedDate+'T00:00:00');
+    if(d < folio.periodStart || d > end) return;
+    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line, carrier:l.carrier}];
     quotes.forEach(q=>{
       if(q.status==='not-sold') return;
+      if(!isFarmersCarrier(q.carrier)) return;
       const line = q.line || l.line;
       if(line==='Life') counts.lifeIP++;
       else if(line==='Commercial') counts.biNB++;
@@ -3126,31 +3080,22 @@ function primeMonthCounts(){
   return counts;
 }
 function calcPrimeScorecard(){
-  const counts = primeMonthCounts();
-  const monthKey = currentPrimeMonthKey();
-  const targets = ((DB.settings && DB.settings.primeTargets) || {})[monthKey] || {};
-  const kpis = PRIME_KPI_DEFS.map(def=>{
+  const counts = primeFolioCounts();
+  const targets = (DB.settings && DB.settings.primeTargets) || {};
+  return { kpis: PRIME_KPI_DEFS.map(def=>{
     const actual = counts[def.key];
     const target = Number(targets[def.field])||0;
-    const pctToTarget = target>0 ? Math.min(actual/target,1) : 0;
-    return { ...def, actual, target, pctToTarget, pointsAchieved: def.points*pctToTarget };
-  });
-  const totalPossible = kpis.reduce((s,k)=>s+k.points,0);
-  const totalAchieved  = kpis.reduce((s,k)=>s+k.pointsAchieved,0);
-  const pctOfPoints = totalPossible>0 ? (totalAchieved/totalPossible)*100 : 0;
-  return { kpis, totalPossible, totalAchieved, pctOfPoints, level: primeAchievementLevel(pctOfPoints) };
+    const pct = target>0 ? Math.min(actual/target,1)*100 : 0;
+    return { ...def, actual, target, pct };
+  }) };
 }
 function renderPrimeScorecard(){
   const el = document.getElementById('prime-scorecard-content');
   if(!el) return;
-  const monthEl = document.getElementById('prime-month');
-  if(monthEl) monthEl.textContent = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const labelEl = document.getElementById('prime-folio-label');
+  if(labelEl) labelEl.textContent = getCurrentFolioPeriod().label;
   const sc = calcPrimeScorecard();
   el.innerHTML = `<div style="padding:12px">
-    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-      <span style="font-size:12px;color:var(--muted)">${sc.totalAchieved.toFixed(2)} / ${sc.totalPossible.toFixed(2)} pts &bull; ${sc.pctOfPoints.toFixed(1)}%</span>
-      <span style="background:${sc.level.color}22;color:${sc.level.color};padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">${sc.level.label}</span>
-    </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
       ${sc.kpis.map(k=>`
         <div style="background:#f8fafc;border-radius:8px;padding:8px 10px">
@@ -3162,18 +3107,15 @@ function renderPrimeScorecard(){
               onchange="setPrimeTarget('${k.field}',this.value)">
           </div>
           <div style="background:var(--border);border-radius:3px;height:5px;overflow:hidden;margin-bottom:2px">
-            <div style="height:5px;border-radius:3px;background:${k.color||'#0ea5a0'};width:${Math.round(k.pctToTarget*100)}%"></div>
+            <div style="height:5px;border-radius:3px;background:${k.color||'#0ea5a0'};width:${Math.round(k.pct)}%"></div>
           </div>
-          <div style="font-size:10px;color:var(--muted)">${k.pointsAchieved.toFixed(2)} / ${k.points.toFixed(2)} pts</div>
+          <div style="font-size:10px;color:var(--muted)">${Math.round(k.pct)}% of goal</div>
         </div>`).join('')}
     </div>
   </div>`;
 }
 async function setPrimeTarget(field, value){
-  const monthKey = currentPrimeMonthKey();
-  const existing = (DB.settings && DB.settings.primeTargets) || {};
-  const primeTargets = { ...existing, [monthKey]: { ...(existing[monthKey]||{}), [field]: Number(value)||0 } };
-  await db.collection('settings').doc('agency').set({ primeTargets }, {merge:true});
+  await db.collection('settings').doc('agency').set({ [`primeTargets.${field}`]: Number(value)||0 }, {merge:true});
   toast('Target updated');
 }
 
