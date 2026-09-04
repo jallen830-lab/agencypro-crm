@@ -737,7 +737,7 @@ select.form-input{cursor:pointer}
         <div class="card" style="margin-bottom:20px">
           <div class="card-header">
             <div class="card-title">🎯 Agency Goals — <span id="prime-folio-label"></span></div>
-            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB &bull; Farmers policies only — producers must enter "Farmers" as the Carrier on each quote for it to count here</div>
+            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB counts Farmers/Bristol West/Foremost &bull; Life I&amp;P and BI NB count Farmers only — producers must enter the Carrier on each quote for it to count here</div>
           </div>
           <div id="prime-scorecard-content"></div>
         </div>
@@ -3055,7 +3055,15 @@ const PRIME_KPI_DEFS = [
 function isFarmersCarrier(carrier){
   return String(carrier||'').toLowerCase().includes('farmers');
 }
-// Current-folio-period agency-wide counts of Farmers new-business policies by KPI bucket, sold quotes only
+// PL & Specialty NB also counts Farmers' other personal-lines brands —
+// Bristol West (non-standard auto) and Foremost (mobile home/rental) —
+// since those write personal lines under the Farmers umbrella. Life and
+// Commercial stay Farmers-only (those brands don't underwrite either).
+function isPersonalLinesCarrier(carrier){
+  const c = String(carrier||'').toLowerCase();
+  return c.includes('farmers') || c.includes('bristol west') || c.includes('bw') || c.includes('foremost');
+}
+// Current-folio-period agency-wide counts of new-business policies by KPI bucket, sold quotes only
 function primeFolioCounts(){
   const folio = getCurrentFolioPeriod();
   const end = new Date(folio.periodEnd); end.setHours(23,59,59,999);
@@ -3070,11 +3078,10 @@ function primeFolioCounts(){
     const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line, carrier:l.carrier}];
     quotes.forEach(q=>{
       if(q.status==='not-sold') return;
-      if(!isFarmersCarrier(q.carrier)) return;
       const line = q.line || l.line;
-      if(line==='Life') counts.lifeIP++;
-      else if(line==='Commercial') counts.biNB++;
-      else if(PL_SPECIALTY_LINES.includes(line)) counts.plSpecialty++;
+      if(line==='Life'){ if(isFarmersCarrier(q.carrier)) counts.lifeIP++; }
+      else if(line==='Commercial'){ if(isFarmersCarrier(q.carrier)) counts.biNB++; }
+      else if(PL_SPECIALTY_LINES.includes(line)){ if(isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
     });
   });
   return counts;
