@@ -3078,14 +3078,16 @@ function renderScoreboard(){
   try { renderPrimeScorecard(); } catch(e){ console.error('Prime Scorecard error:',e); }
 }
 
-// ── PRIME SCORECARD (Farmers' point-based agent scoring) ──────────────
+// ── PRIME SCORECARD (Farmers' point-based agency scoring) ─────────────
 // Tracks the 3 KPIs the CRM can actually compute from its own data —
 // PL & Specialty NB, Life I&P, BI NB — out of the 8 on Farmers' real
 // Prime Scorecard (the other 5, incl. Premium Growth, depend on data the
 // CRM doesn't have: claims/loss ratios, FFS accounts, staff licensing).
-// Targets are entered manually per producer (producers.primeTargets),
-// since Farmers calculates them internally per agent — same pattern as
-// the existing folioGoals. Points formula mirrors Farmers' own:
+// Combined agency-wide (not per-producer) — individual producer goals
+// already exist elsewhere (folioGoals, Monthly Premium Goal). Targets are
+// entered manually (settings.agency.primeTargets), since Farmers
+// calculates them internally per agent, not something the CRM can derive.
+// Points formula mirrors Farmers' own:
 // points_achieved = points_possible × min(YTD actual / YTD target, 100%).
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const PRIME_KPI_DEFS = [
@@ -3101,12 +3103,12 @@ function primeAchievementLevel(pct){
   if(pct>=10) return {label:'★★',     color:'#f97316'};
   return             {label:'★',      color:'#ef4444'};
 }
-// YTD (calendar year) counts of new-business policies by KPI bucket, sold quotes only
-function primeYTDCounts(producerId){
+// YTD (calendar year) agency-wide counts of new-business policies by KPI bucket, sold quotes only
+function primeYTDCounts(){
   const year = String(new Date().getFullYear());
   const counts = { plSpecialty:0, lifeIP:0, biNB:0 };
   DB.leads.forEach(l=>{
-    if(l.agentId!==producerId || l.status!=='Closed Won') return;
+    if(l.status!=='Closed Won') return;
     if(l.customerType==='existing' && !l.crossSellRef) return; // new business only, matches calcProducerStats convention
     const closedDate = l.closedDate || l.date || '';
     if(!closedDate.startsWith(year)) return;
@@ -3121,9 +3123,9 @@ function primeYTDCounts(producerId){
   });
   return counts;
 }
-function calcPrimeScorecard(producer){
-  const counts = primeYTDCounts(producer.id);
-  const targets = producer.primeTargets || {};
+function calcPrimeScorecard(){
+  const counts = primeYTDCounts();
+  const targets = (DB.settings && DB.settings.primeTargets) || {};
   const kpis = PRIME_KPI_DEFS.map(def=>{
     const actual = counts[def.key];
     const target = Number(targets[def.field])||0;
@@ -3140,46 +3142,32 @@ function renderPrimeScorecard(){
   if(!el) return;
   const yearEl = document.getElementById('prime-year');
   if(yearEl) yearEl.textContent = new Date().getFullYear();
-  if(!DB.producers.length){
-    el.innerHTML = '<div class="empty-state" style="padding:16px">No producers yet.</div>';
-    return;
-  }
-  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;padding:12px">
-    ${DB.producers.map(p=>{
-      const sc = calcPrimeScorecard(p);
-      return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="width:10px;height:10px;border-radius:50%;background:${p.color||'#94a3b8'};display:inline-block"></span>
-            <strong style="font-size:13px">${p.name}</strong>
+  const sc = calcPrimeScorecard();
+  el.innerHTML = `<div style="padding:12px">
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <span style="font-size:12px;color:var(--muted)">${sc.totalAchieved.toFixed(2)} / ${sc.totalPossible.toFixed(2)} pts &bull; ${sc.pctOfPoints.toFixed(1)}%</span>
+      <span style="background:${sc.level.color}22;color:${sc.level.color};padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">${sc.level.label}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+      ${sc.kpis.map(k=>`
+        <div style="background:#f8fafc;border-radius:8px;padding:8px 10px">
+          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">${k.label}</div>
+          <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px">
+            <span style="font-size:16px;font-weight:700;color:var(--text)">${k.actual}</span>
+            <span style="font-size:11px;color:var(--muted)">/</span>
+            <input type="number" value="${k.target||''}" placeholder="target" style="width:56px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;font-size:11px"
+              onchange="setPrimeTarget('${k.field}',this.value)">
           </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:12px;color:var(--muted)">${sc.totalAchieved.toFixed(2)} / ${sc.totalPossible.toFixed(2)} pts &bull; ${sc.pctOfPoints.toFixed(1)}%</span>
-            <span style="background:${sc.level.color}22;color:${sc.level.color};padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700">${sc.level.label}</span>
+          <div style="background:var(--border);border-radius:3px;height:5px;overflow:hidden;margin-bottom:2px">
+            <div style="height:5px;border-radius:3px;background:${k.color||'#0ea5a0'};width:${Math.round(k.pctToTarget*100)}%"></div>
           </div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-          ${sc.kpis.map(k=>`
-            <div style="background:#f8fafc;border-radius:8px;padding:8px 10px">
-              <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">${k.label}</div>
-              <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px">
-                <span style="font-size:16px;font-weight:700;color:var(--text)">${k.actual}</span>
-                <span style="font-size:11px;color:var(--muted)">/</span>
-                <input type="number" value="${k.target||''}" placeholder="target" style="width:56px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;font-size:11px"
-                  onchange="setPrimeTarget('${p.id}','${k.field}',this.value)">
-              </div>
-              <div style="background:var(--border);border-radius:3px;height:5px;overflow:hidden;margin-bottom:2px">
-                <div style="height:5px;border-radius:3px;background:${k.color||'#0ea5a0'};width:${Math.round(k.pctToTarget*100)}%"></div>
-              </div>
-              <div style="font-size:10px;color:var(--muted)">${k.pointsAchieved.toFixed(2)} / ${k.points.toFixed(2)} pts</div>
-            </div>`).join('')}
-        </div>
-      </div>`;
-    }).join('')}
+          <div style="font-size:10px;color:var(--muted)">${k.pointsAchieved.toFixed(2)} / ${k.points.toFixed(2)} pts</div>
+        </div>`).join('')}
+    </div>
   </div>`;
 }
-async function setPrimeTarget(producerId, field, value){
-  await db.collection('producers').doc(producerId).update({ [`primeTargets.${field}`]: Number(value)||0 });
+async function setPrimeTarget(field, value){
+  await db.collection('settings').doc('agency').set({ [`primeTargets.${field}`]: Number(value)||0 }, {merge:true});
   toast('Target updated');
 }
 
