@@ -813,8 +813,8 @@ select.form-input{cursor:pointer}
         <!-- PRIME SCORECARD -->
         <div class="card" style="margin-top:14px">
           <div class="card-header">
-            <div class="card-title">🎯 Prime Scorecard — YTD <span id="prime-year"></span></div>
-            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB — enter Farmers' official YTD targets from each Prime Scorecard report</div>
+            <div class="card-title">🎯 Prime Scorecard — <span id="prime-month"></span></div>
+            <div style="font-size:11px;color:var(--muted)">PL &amp; Specialty NB, Life I&amp;P, BI NB — enter Farmers' official Monthly Targets for the current month</div>
           </div>
           <div id="prime-scorecard-content"></div>
         </div>
@@ -3084,11 +3084,12 @@ function renderScoreboard(){
 // Prime Scorecard (the other 5, incl. Premium Growth, depend on data the
 // CRM doesn't have: claims/loss ratios, FFS accounts, staff licensing).
 // Combined agency-wide (not per-producer) — individual producer goals
-// already exist elsewhere (folioGoals, Monthly Premium Goal). Targets are
-// entered manually (settings.agency.primeTargets), since Farmers
-// calculates them internally per agent, not something the CRM can derive.
-// Points formula mirrors Farmers' own:
-// points_achieved = points_possible × min(YTD actual / YTD target, 100%).
+// already exist elsewhere (folioGoals, Monthly Premium Goal). Tracks by
+// CALENDAR MONTH (not YTD) to match Farmers' own "Monthly Targets" table —
+// targets are entered manually per month (settings.agency.primeTargets,
+// keyed "YYYY-MM"), since Farmers calculates them internally, not
+// something the CRM can derive. Points formula mirrors Farmers' own:
+// points_achieved = points_possible × min(month actual / month target, 100%).
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const PRIME_KPI_DEFS = [
   { key:'plSpecialty', field:'plSpecialtyNB', label:'PL & Specialty NB', points:3.00, color:'#0ea5a0' },
@@ -3103,15 +3104,16 @@ function primeAchievementLevel(pct){
   if(pct>=10) return {label:'★★',     color:'#f97316'};
   return             {label:'★',      color:'#ef4444'};
 }
-// YTD (calendar year) agency-wide counts of new-business policies by KPI bucket, sold quotes only
-function primeYTDCounts(){
-  const year = String(new Date().getFullYear());
+function currentPrimeMonthKey(){ return new Date().toISOString().slice(0,7); } // "YYYY-MM"
+// Current-calendar-month agency-wide counts of new-business policies by KPI bucket, sold quotes only
+function primeMonthCounts(){
+  const monthKey = currentPrimeMonthKey();
   const counts = { plSpecialty:0, lifeIP:0, biNB:0 };
   DB.leads.forEach(l=>{
     if(l.status!=='Closed Won') return;
     if(l.customerType==='existing' && !l.crossSellRef) return; // new business only, matches calcProducerStats convention
     const closedDate = l.closedDate || l.date || '';
-    if(!closedDate.startsWith(year)) return;
+    if(!closedDate.startsWith(monthKey)) return;
     const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line}];
     quotes.forEach(q=>{
       if(q.status==='not-sold') return;
@@ -3124,8 +3126,9 @@ function primeYTDCounts(){
   return counts;
 }
 function calcPrimeScorecard(){
-  const counts = primeYTDCounts();
-  const targets = (DB.settings && DB.settings.primeTargets) || {};
+  const counts = primeMonthCounts();
+  const monthKey = currentPrimeMonthKey();
+  const targets = ((DB.settings && DB.settings.primeTargets) || {})[monthKey] || {};
   const kpis = PRIME_KPI_DEFS.map(def=>{
     const actual = counts[def.key];
     const target = Number(targets[def.field])||0;
@@ -3140,8 +3143,8 @@ function calcPrimeScorecard(){
 function renderPrimeScorecard(){
   const el = document.getElementById('prime-scorecard-content');
   if(!el) return;
-  const yearEl = document.getElementById('prime-year');
-  if(yearEl) yearEl.textContent = new Date().getFullYear();
+  const monthEl = document.getElementById('prime-month');
+  if(monthEl) monthEl.textContent = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
   const sc = calcPrimeScorecard();
   el.innerHTML = `<div style="padding:12px">
     <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap;gap:8px">
@@ -3167,7 +3170,10 @@ function renderPrimeScorecard(){
   </div>`;
 }
 async function setPrimeTarget(field, value){
-  await db.collection('settings').doc('agency').set({ [`primeTargets.${field}`]: Number(value)||0 }, {merge:true});
+  const monthKey = currentPrimeMonthKey();
+  const existing = (DB.settings && DB.settings.primeTargets) || {};
+  const primeTargets = { ...existing, [monthKey]: { ...(existing[monthKey]||{}), [field]: Number(value)||0 } };
+  await db.collection('settings').doc('agency').set({ primeTargets }, {merge:true});
   toast('Target updated');
 }
 
