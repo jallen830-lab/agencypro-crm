@@ -36,6 +36,40 @@ function parseVal(v) {
   if (v.mapValue)    return parseDoc(v.mapValue.fields || {});
   return null;
 }
+async function firestoreGetDoc(projectId, apiKey, path) {
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${path}?key=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const doc = await res.json();
+  return parseDoc(doc.fields || {});
+}
+
+// ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
+const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
+const isFarmersCarrier = carrier => String(carrier||'').toLowerCase().includes('farmers');
+const isPersonalLinesCarrier = carrier => {
+  const c = String(carrier||'').toLowerCase();
+  return c.includes('farmers') || c.includes('bristol west') || c.includes('bw') || c.includes('foremost');
+};
+function calcAgencyGoals(fcLeads, primeTargets) {
+  const counts = { plSpecialty: 0, lifeIP: 0, biNB: 0 };
+  fcLeads.forEach(l => {
+    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{ line: l.line, carrier: l.carrier }];
+    quotes.forEach(q => {
+      if (q.status === 'not-sold') return;
+      const line = q.line || l.line;
+      if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
+      else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
+      else if (PL_SPECIALTY_LINES.includes(line)) { if (isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
+    });
+  });
+  const t = primeTargets || {};
+  return [
+    { label: 'PL & Specialty NB', actual: counts.plSpecialty, target: Number(t.plSpecialtyNB) || 0 },
+    { label: 'Life I&P',          actual: counts.lifeIP,      target: Number(t.lifeIP) || 0 },
+    { label: 'BI NB',             actual: counts.biNB,        target: Number(t.biNB) || 0 },
+  ];
+}
 
 // ── HELPERS ───────────────────────────────────────────────────────────
 const fmtDol = n   => '$' + Number(n || 0).toLocaleString('en-US');
@@ -89,9 +123,10 @@ export default async function handler() {
   if (!projectId || !apiKey)  throw new Error('Missing Firebase env vars');
   if (!resendKey)             throw new Error('Missing RESEND_API_KEY');
 
-  const [leads, producers] = await Promise.all([
+  const [leads, producers, settings] = await Promise.all([
     firestoreGet(projectId, apiKey, 'leads'),
     firestoreGet(projectId, apiKey, 'producers'),
+    firestoreGetDoc(projectId, apiKey, 'settings/agency'),
   ]);
 
   const getProd = id => producers.find(p=>p.id===id)?.name || 'Unassigned';
@@ -122,6 +157,9 @@ export default async function handler() {
   const fPol  = fcLeads.reduce((s,l)=>s+polCount(l),0);
   const fPrem = fcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
 
+  // ── AGENCY GOALS ──
+  const agencyGoals = calcAgencyGoals(fcLeads, settings?.primeTargets);
+
   // ── PRODUCER STATS ──
   const prod = {};
   const ens  = n => { if(!prod[n]) prod[n]={qT:0,polT:0,premT:0,qF:0,polF:0,premF:0}; };
@@ -134,6 +172,12 @@ export default async function handler() {
   let txt = `ALLEN INSURANCE AGENCY\nDaily KPI Report — ${fmtDt(today)}\nFolio: ${folio.label}\n${'='.repeat(60)}\n\n`;
   txt += `TODAY\n${ln(60)}\nQuotes:    ${String(tqRows.length).padStart(6)}\nPolicies:  ${String(tPol).padStart(6)}\nPremium:   ${fmtDol(tPrem).padStart(10)}\n\n`;
   txt += `FOLIO TO DATE\n${ln(60)}\nQuotes:    ${String(fqRows.length).padStart(6)}\nPolicies:  ${String(fPol).padStart(6)}\nPremium:   ${fmtDol(fPrem).padStart(10)}\n\n`;
+  txt += `AGENCY GOALS — THIS FOLIO (Farmers/BW/Foremost)\n${ln(60)}\n`;
+  agencyGoals.forEach(g=>{
+    const pct = g.target>0 ? Math.round((g.actual/g.target)*100) : 0;
+    txt += pad(g.label, 20) + pad(`${g.actual} / ${g.target}`, 10) + `${pct}%\n`;
+  });
+  txt += '\n';
   txt += `PRODUCER BREAKDOWN\n${ln(60)}\n`;
   const col=[18,7,8,10,7,8,10];
   txt += pad('Producer',col[0])+pad('Q-Day',col[1],true)+pad('Pol-Day',col[2],true)+pad('Prem-Day',col[3],true)+pad('Q-Folio',col[4],true)+pad('P-Folio',col[5],true)+pad('$-Folio',col[6],true)+'\n'+ln(60)+'\n';
@@ -188,6 +232,21 @@ export default async function handler() {
       <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase">Premium Sold</div>
       <div style="font-size:28px;font-weight:900;color:#C47A2A;line-height:1.1;margin:6px 0 2px">${fmtDol(tPrem)}</div>
       <div style="font-size:11px;color:#94a3b8">new business today</div>
+    </div>
+  </div>
+  <div style="background:#fff;border-radius:10px;margin-bottom:16px;overflow:hidden">
+    <div style="background:#1B3A5C;padding:14px 20px"><span style="color:#fff;font-size:14px;font-weight:700">🎯 Agency Goals — This Folio</span></div>
+    <div style="padding:16px;display:flex;gap:10px">
+      ${agencyGoals.map(g=>{
+        const pct = g.target>0 ? Math.min(100,Math.round((g.actual/g.target)*100)) : 0;
+        return `<div style="flex:1;background:#f8fafc;border-radius:8px;padding:10px 12px">
+          <div style="font-size:10px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px">${g.label}</div>
+          <div style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:6px">${g.actual} <span style="font-size:12px;font-weight:400;color:#94a3b8">/ ${g.target}</span></div>
+          <div style="background:#e2e8f0;border-radius:3px;height:6px;overflow:hidden">
+            <div style="height:6px;border-radius:3px;background:#0ea5a0;width:${pct}%"></div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>
   </div>
   <div style="background:#fff;border-radius:10px;margin-bottom:16px;overflow:hidden">
