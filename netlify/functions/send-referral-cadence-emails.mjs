@@ -10,7 +10,7 @@
  * ROOFER_CADENCE/BUSINESS_BANKER_CADENCE/COMMERCIAL_REALTOR_CADENCE keyed
  * by each task's cadenceType field.
  * Sends from the assigned producer's own mailbox on the verified
- * youragentonthego.com domain. When the Week 12 (appreciation) email
+ * alleninsurancetx.com domain. When the Week 12 (appreciation) email
  * sends, this also creates the next cycle's 12 tasks (same cadenceType)
  * so the cadence repeats indefinitely for as long as the partner stays active.
  *
@@ -21,7 +21,7 @@
  */
 
 const DEFAULT_FROM_NAME  = 'Jason Allen';
-const DEFAULT_FROM_EMAIL = 'jason@youragentonthego.com';
+const DEFAULT_FROM_EMAIL = 'jason@alleninsurancetx.com';
 
 // ── FIRESTORE REST API ────────────────────────────────────────────────
 async function firestoreGet(projectId, apiKey, collection) {

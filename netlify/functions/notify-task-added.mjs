@@ -9,7 +9,7 @@
  *   FIREBASE_PROJECT_ID   → agencypro-crm
  *   FIREBASE_WEB_API_KEY  → AIzaSyBlo5vw62iKEAdqcg3xEY7TwvdPze10VcM
  *   RESEND_API_KEY        → from resend.com (starts with re_)
- *   REPORT_FROM_EMAIL     → reports@youragentonthego.com
+ *   REPORT_FROM_EMAIL     → reports@alleninsurancetx.com
  */
 
 const AGENCY_PHONE = '(817) 345-0155';
@@ -50,7 +50,7 @@ export default async function handler(req) {
   const projectId  = process.env.FIREBASE_PROJECT_ID;
   const apiKey     = process.env.FIREBASE_WEB_API_KEY;
   const resendKey  = process.env.RESEND_API_KEY;
-  const fromEmail  = process.env.REPORT_FROM_EMAIL || 'reports@youragentonthego.com';
+  const fromEmail  = process.env.REPORT_FROM_EMAIL || 'reports@alleninsurancetx.com';
 
   if (!projectId || !apiKey) throw new Error('Missing Firebase env vars');
   if (!resendKey)            throw new Error('Missing RESEND_API_KEY');

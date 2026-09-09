@@ -4534,7 +4534,7 @@ function producerForm(d){
     </div>
     <div class="form-row"><div class="form-group"><label class="form-label">Full Name *</label><input class="form-input" id="p-nm" value="${ed?d.name:''}" placeholder="Full name"></div>
     <div class="form-group"><label class="form-label">Role</label><input class="form-input" id="p-rl" value="${ed?d.role:'Producer'}" placeholder="e.g. Sr. Producer"></div></div>
-    <div class="form-group"><label class="form-label">Email (used to send automated follow-up emails)</label><input class="form-input" id="p-em" type="email" value="${ed?d.email||'':''}" placeholder="jason@youragentonthego.com"></div>
+    <div class="form-group"><label class="form-label">Email (used to send automated follow-up emails)</label><input class="form-input" id="p-em" type="email" value="${ed?d.email||'':''}" placeholder="jason@alleninsurancetx.com"></div>
     <div class="form-group"><label class="form-label">Monthly Premium Goal ($)</label><input class="form-input" id="p-gl" type="number" value="${ed?d.goal:30000}" placeholder="30000"></div>
     <div class="form-group"><label class="form-label">Color</label>
       <div style="display:flex;gap:8px;margin-top:4px">${colors.map(c=>`<div onclick="selectColor('${c}')" data-color="${c}" style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${ed&&d.color===c?'#1e293b':'transparent'}"></div>`).join('')}</div>

@@ -4,7 +4,7 @@
  *
  * Sends the Day 3 "value" and Day 10 "last attempt" follow-up emails for
  * Quoted leads automatically, from the assigned producer's own mailbox on
- * the verified youragentonthego.com domain. Each task is created by
+ * the verified alleninsurancetx.com domain. Each task is created by
  * createQuotedFollowUpTasks() in index.html with taskType:'email' and
  * autoSend:true — this function finds ones due today, sends via Resend,
  * and marks them done so they drop off the open task list.
@@ -16,7 +16,7 @@
  */
 
 const DEFAULT_FROM_NAME  = 'Jason Allen';
-const DEFAULT_FROM_EMAIL = 'jason@youragentonthego.com';
+const DEFAULT_FROM_EMAIL = 'jason@alleninsurancetx.com';
 const AGENCY_PHONE = '(817) 345-0155';
 
 // ── FIRESTORE REST API ────────────────────────────────────────────────

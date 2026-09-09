@@ -4,7 +4,7 @@
  *
  * Sends each producer a personal email listing their open tasks that are
  * due today or overdue (same set the Tasks tab's "Open" filter shows),
- * from their own mailbox on the verified youragentonthego.com domain.
+ * from their own mailbox on the verified alleninsurancetx.com domain.
  * Runs before the 9am auto-send emails, so autoSend:true tasks due today
  * are flagged as "sends automatically this morning" rather than "sent."
  * Skips producers with zero open tasks — no empty inbox noise.
@@ -16,7 +16,7 @@
  */
 
 const AGENCY_PHONE = '(817) 345-0155';
-const SYSTEM_FROM_EMAIL = process.env.REPORT_FROM_EMAIL || 'reports@youragentonthego.com';
+const SYSTEM_FROM_EMAIL = process.env.REPORT_FROM_EMAIL || 'reports@alleninsurancetx.com';
 
 // ── FIRESTORE REST API ────────────────────────────────────────────────
 async function firestoreGet(projectId, apiKey, collection) {
