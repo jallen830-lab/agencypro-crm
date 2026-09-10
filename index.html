@@ -484,54 +484,24 @@ select.form-input{cursor:pointer}
           <button class="pipeline-tab active" id="ptab-newleads" onclick="switchPipelineTab(&#39;newleads&#39;)">
             🏠 Personal Lines <span class="ptab-count" id="ptab-newleads-count"></span>
           </button>
-          <button class="pipeline-tab" id="ptab-winbacks" onclick="switchPipelineTab(&#39;winbacks&#39;)">
-            🔁 Winbacks <span class="ptab-count" id="ptab-winbacks-count"></span>
-          </button>
-          <button class="pipeline-tab" id="ptab-qnc" onclick="switchPipelineTab(&#39;qnc&#39;)">
-            📋 Quote Not Closed <span class="ptab-count" id="ptab-qnc-count"></span>
-          </button>
           <button class="pipeline-tab" id="ptab-life" onclick="switchPipelineTab(&#39;life&#39;)">
             🛡 Life Insurance <span class="ptab-count" id="ptab-life-count"></span>
           </button>
           <button class="pipeline-tab" id="ptab-commercial" onclick="switchPipelineTab(&#39;commercial&#39;)">
             🏢 Commercial <span class="ptab-count" id="ptab-commercial-count"></span>
           </button>
-          <button class="pipeline-tab" id="ptab-crosssell" onclick="switchPipelineTab(&#39;crosssell&#39;)">
-            🔀 Cross-Sell <span class="ptab-count" id="ptab-crosssell-count"></span>
-          </button>
         </div>
 
-        <!-- NEW LEADS board -->
+        <!-- PERSONAL LINES board (Personal Lines + Winbacks + Quote Not Closed + Cross-Sell) -->
         <div id="ps-newleads">
           <div class="pipeline-section-header" style="background:linear-gradient(90deg,#3b82f6,#60a5fa)">
             <span>🏠 Personal Lines</span>
             <span id="ps-newleads-count" class="ps-count"></span>
             <span id="ps-newleads-total" class="ps-total"></span>
-            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto" onclick="openModalWithType(&#39;lead&#39;,&#39;Personal Lines&#39;)">+ Add Personal Lines Lead</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto;margin-right:6px" onclick="openModalWithType(&#39;lead&#39;,&#39;Personal Lines&#39;)">+ Add Lead</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="openModal(&#39;crosssell&#39;)">+ Cross-Sell Opp</button>
           </div>
           <div class="pipeline-wrap" id="pipeline-newleads"></div>
-        </div>
-
-        <!-- WINBACKS board -->
-        <div id="ps-winbacks" style="display:none">
-          <div class="pipeline-section-header" style="background:linear-gradient(90deg,#8b5cf6,#a78bfa)">
-            <span>🔁 Winbacks</span>
-            <span id="ps-winbacks-count" class="ps-count"></span>
-            <span id="ps-winbacks-total" class="ps-total"></span>
-            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto" onclick="openModalWithType(&#39;lead&#39;,&#39;Winback&#39;)">+ Add Winback</button>
-          </div>
-          <div class="pipeline-wrap" id="pipeline-winbacks"></div>
-        </div>
-
-        <!-- QUOTE NOT CLOSED board -->
-        <div id="ps-qnc" style="display:none">
-          <div class="pipeline-section-header" style="background:linear-gradient(90deg,#f97316,#fb923c)">
-            <span>📋 Quote Not Closed</span>
-            <span id="ps-qnc-count" class="ps-count"></span>
-            <span id="ps-qnc-total" class="ps-total"></span>
-            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto" onclick="openModalWithType(&#39;lead&#39;,&#39;Quote Not Closed&#39;)">+ Add QNC Lead</button>
-          </div>
-          <div class="pipeline-wrap" id="pipeline-qnc"></div>
         </div>
 
         <!-- LIFE INSURANCE board -->
@@ -554,18 +524,6 @@ select.form-input{cursor:pointer}
             <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto" onclick="openModalWithType(&#39;lead&#39;,&#39;Commercial&#39;)">+ Add Commercial Lead</button>
           </div>
           <div class="pipeline-wrap" id="pipeline-commercial"></div>
-        </div>
-
-        <!-- CROSS-SELL board -->
-        <div id="ps-crosssell" style="display:none">
-          <div class="pipeline-section-header" style="background:linear-gradient(90deg,#6366f1,#818cf8)">
-            <span>🔀 Cross-Sell</span>
-            <span id="ps-crosssell-count" class="ps-count"></span>
-            <span id="ps-crosssell-total" class="ps-total"></span>
-            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto;margin-right:6px" onclick="openModalWithType(&#39;lead&#39;,&#39;Cross Sale&#39;)">+ Lead</button>
-            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="openModal(&#39;crosssell&#39;)">+ Opportunity</button>
-          </div>
-          <div id="crosssell-kanban"></div>
         </div>
       </div>
 
@@ -2540,12 +2498,13 @@ const STAGE_BG={New:'#dbeafe',Contacted:'#fef3c7',Quoted:'#ede9fe','Closed Won':
 let activePipelineTab = 'newleads';
 
 function switchPipelineTab(tab){
+  if(!['newleads','life','commercial'].includes(tab)) tab = 'newleads';
   activePipelineTab = tab;
-  ['newleads','winbacks','qnc','life','commercial','crosssell'].forEach(t=>{
+  ['newleads','life','commercial'].forEach(t=>{
     const btn = document.getElementById('ptab-'+t);
     if(btn) btn.className = 'pipeline-tab' + (t===tab?' active':'');
   });
-  ['ps-newleads','ps-winbacks','ps-qnc','ps-life','ps-commercial','ps-crosssell'].forEach(id=>{
+  ['ps-newleads','ps-life','ps-commercial'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.style.display = id==='ps-'+tab ? 'block' : 'none';
   });
@@ -2559,12 +2518,13 @@ function renderPipeline(){
 
   // Exclude Closed Won (Customers), Closed Lost, QNC, Customer Left, Uncontacted from pipeline
   const excl = l => !['Closed Lost','Closed Won','Customer Left','Quote Not Closed','Uncontacted'].includes(l.status);
-  const newLeads   = allLeads.filter(l=>(!l.leadType||l.leadType==='Personal Lines')&&excl(l));
-  const winbacks   = allLeads.filter(l=>l.leadType==='Winback'&&excl(l));
-  const qncLeads   = allLeads.filter(l=>l.leadType==='Quote Not Closed'&&excl(l));
+  // Personal Lines board now absorbs Winback, Quote Not Closed and Cross Sale lead types
+  const PL_LEAD_TYPES = ['Personal Lines','Winback','Quote Not Closed','Cross Sale'];
+  const plLeads    = allLeads.filter(l=>(!l.leadType||PL_LEAD_TYPES.includes(l.leadType))&&excl(l));
   const lifeLeads  = allLeads.filter(l=>l.leadType==='Life Insurance'&&excl(l));
   const commLeads  = allLeads.filter(l=>l.leadType==='Commercial'&&excl(l));
-  const csLeadLeads= allLeads.filter(l=>l.leadType==='Cross Sale'&&excl(l));
+  // Existing-customer cross-sell opportunities (separate collection) also live on the PL board
+  const csOpps     = DB.crosssells.filter(c=>(!af||c.agentId===af)&&!['Closed Won','Closed Lost'].includes(c.status));
 
   // Total pipeline premium
   const totalPremium = allLeads.filter(l=>ACTIVE.includes(l.status)).reduce((s,l)=>s+Number(l.premium||0),0);
@@ -2572,13 +2532,17 @@ function renderPipeline(){
 
   // Update tab counts
   const tc = (id,n)=>{ const el=document.getElementById(id); if(el) el.textContent=n; };
-  tc('ptab-newleads-count',  newLeads.length);
-  tc('ptab-winbacks-count',  winbacks.length);
-  tc('ptab-qnc-count',       qncLeads.length);
+  tc('ptab-newleads-count',  plLeads.length + csOpps.length);
   tc('ptab-life-count',      lifeLeads.length);
   tc('ptab-commercial-count',commLeads.length);
-  const csTotal = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status)).length + csLeadLeads.length;
-  tc('ptab-crosssell-count', csTotal);
+
+  // Small colored badge shown on non-standard cards in the merged Personal Lines board
+  const TYPE_TAG = {
+    'Winback':          {label:'Winback',   bg:'#ede9fe', fg:'#7c3aed'},
+    'Quote Not Closed': {label:'QNC',       bg:'#ffedd5', fg:'#c2410c'},
+    'Cross Sale':       {label:'Cross-Sell',bg:'#e0e7ff', fg:'#4338ca'},
+  };
+  const tagHtml = t => t ? `<span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;background:${t.bg};color:${t.fg};margin-left:4px;vertical-align:middle">${t.label}</span>` : '';
 
   // Helper to build a kanban board
   function buildBoard(leads, boardId, countId, totalId){
@@ -2607,54 +2571,50 @@ function renderPipeline(){
         </div></div>`;}).join('');
   }
 
-  buildBoard(newLeads,  'pipeline-newleads',  'ps-newleads-count',  'ps-newleads-total');
-  buildBoard(winbacks,  'pipeline-winbacks',  'ps-winbacks-count',  'ps-winbacks-total');
-  buildBoard(qncLeads,  'pipeline-qnc',       'ps-qnc-count',       'ps-qnc-total');
   buildBoard(lifeLeads, 'pipeline-life',      'ps-life-count',      'ps-life-total');
   buildBoard(commLeads, 'pipeline-commercial','ps-commercial-count','ps-commercial-total');
 
-    // Cross-sell kanban — Closed Lost goes to Remarketing, not shown here
-  const csStages=['New','Contacted','Quoted','Closed Won'];
-  const allCsItems = [
-    // From crosssells collection — exclude Closed Lost (goes to Remarketing)
-    ...DB.crosssells.filter(c=>(!af||c.agentId===af)&&c.status!=='Closed Lost').map(c=>({
-      _type:'cs', id:c.id, name:c.customerName||'Unknown',
-      sub: c.line+(c.carrier?' — '+c.carrier:''),
-      premium:c.premium, status:c.status, agentId:c.agentId,
-      onClick:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`
+  // ── Merged Personal Lines board: PL/Winback/QNC/Cross-Sale leads + cross-sell opps ──
+  const plItems = [
+    ...plLeads.map(l=>({
+      id:l.id, name:`${l.firstName} ${l.lastName}`, company:l.companyName,
+      sub:`${l.line} — ${l.source}`, premium:l.premium, status:l.status, agentId:l.agentId,
+      tag: TYPE_TAG[l.leadType]||null,
+      onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
+      del:`deleteLead('${l.id}')`
     })),
-    // From leads with leadType Cross Sale — exclude Closed Lost
-    ...csLeadLeads.filter(l=>l.status!=='Closed Lost').map(l=>({
-      _type:'lead', id:l.id, name:`${l.firstName} ${l.lastName}`,
-      sub: l.line+(l.carrier?' — '+l.carrier:''),
-      premium:l.premium, status:l.status, agentId:l.agentId,
-      onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`
+    ...csOpps.map(c=>({
+      id:c.id, name:c.customerName||'Unknown', company:null,
+      sub:c.line+(c.carrier?' — '+c.carrier:''), premium:c.premium, status:c.status, agentId:c.agentId,
+      tag: TYPE_TAG['Cross Sale'],
+      onClick:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`,
+      del:`deleteCrossSell('${c.id}')`
     }))
   ];
-  const csPremium = allCsItems.reduce((s,c)=>s+Number(c.premium||0),0);
-  tc('ps-crosssell-count', allCsItems.length+' opps');
-  tc('ps-crosssell-total', allCsItems.length?fmt$(csPremium):'');
-  const csKanban = document.getElementById('crosssell-kanban');
-  if(csKanban){
-    csKanban.className = 'pipeline-wrap';
-    csKanban.innerHTML = csStages.map(stage=>{
-      const sl = allCsItems.filter(c=>c.status===stage);
+  const plPremium = plItems.filter(i=>ACTIVE.includes(i.status)).reduce((s,i)=>s+Number(i.premium||0),0);
+  tc('ps-newleads-count', plItems.length+' leads');
+  tc('ps-newleads-total', plItems.length ? fmt$(plPremium) : '');
+  const plBoard = document.getElementById('pipeline-newleads');
+  if(plBoard){
+    plBoard.innerHTML = ACTIVE.map(stage=>{
+      const sl = plItems.filter(i=>i.status===stage);
       return `<div class="p-col">
-        <div class="p-col-head" style="background:${STAGE_BG[stage]||'#f1f5f9'};color:${STAGE_COLORS[stage]||'#64748b'}">
+        <div class="p-col-head" style="background:${STAGE_BG[stage]};color:${STAGE_COLORS[stage]}">
           <span>${stage}</span><span>${sl.length}</span>
         </div>
-        <div class="p-col-body">${sl.map(c=>`
-          <div class="deal-card" style="border-left-color:${STAGE_COLORS[stage]||'#94a3b8'}" onclick="${c.onClick}">
-            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${c.name}</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${c.sub}</div>
+        <div class="p-col-body">${sl.map(i=>`
+          <div class="deal-card" style="border-left-color:${STAGE_COLORS[stage]}" onclick="${i.onClick}">
+            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${i.name}${tagHtml(i.tag)}</div>
+            ${i.company?`<div style="font-size:11px;color:#1d4ed8;font-weight:600;margin-bottom:1px">🏢 ${i.company}</div>`:''}
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${i.sub}</div>
             <div style="display:flex;align-items:center;justify-content:space-between">
-              <span style="font-size:12px;font-weight:600;color:#6366f1">${fmt$(c.premium)}</span>
+              <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(i.premium)}</span>
               <div style="display:flex;align-items:center;gap:4px">
-                <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(c.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(c.agentId)}</div>
-                <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${c._type==='cs'?`deleteCrossSell('${c.id}')`:`deleteLead('${c.id}')`}" title="Delete">🗑</button>
+                <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(i.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(i.agentId)}</div>
+                <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.del}" title="Delete">🗑</button>
               </div>
             </div>
-          </div>`).join('')||'<div class="empty-state" style="padding:16px">No opportunities</div>'}
+          </div>`).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
         </div></div>`;}).join('');
   }
 
