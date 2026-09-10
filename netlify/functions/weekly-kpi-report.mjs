@@ -45,6 +45,8 @@ async function firestoreGetDoc(projectId, apiKey, path) {
 }
 
 // ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
+const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
+const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const isFarmersCarrier = carrier => String(carrier||'').toLowerCase().includes('farmers');
 const isPersonalLinesCarrier = carrier => {
@@ -56,7 +58,7 @@ function calcAgencyGoals(fcLeads, primeTargets) {
   fcLeads.forEach(l => {
     const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{ line: l.line, carrier: l.carrier }];
     quotes.forEach(q => {
-      if (q.status === 'not-sold') return;
+      if (!quoteIsSold(q)) return;
       const line = q.line || l.line;
       if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
       else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
@@ -114,7 +116,9 @@ function getWeekPeriod(today) {
   return { weekStart:s, weekEnd:e, label:`${fmt(s)} – ${e.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` };
 }
 
-const polCount  = l => (l.quotes&&l.quotes.length) ? l.quotes.length : 1;
+// Only quote lines that actually closed won (see quoteIsSold) count as sold policies.
+const soldQuotesOf = l => (l.quotes&&l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{line:l.line,premium:l.premium}];
+const polCount  = l => soldQuotesOf(l).length;
 const expandQ   = l => {
   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
   if (l.quotes&&l.quotes.length) return l.quotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0,date:l.quotedDate}));
@@ -208,7 +212,7 @@ export default async function handler() {
   txt+=`QUOTES THIS WEEK (${wqRows.length})\n${ln(60)}\n`;
   if(wqRows.length){txt+=pad('Customer',22)+pad('Line',14)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wqRows.forEach(q=>{txt+=pad(q.name.slice(0,21),22)+pad((q.line||'—').slice(0,13),14)+pad(getProd(q.agentId).slice(0,15),16)+fmtDt(q.date)+'\n';});}else{txt+='No quotes this week.\n';}
   txt+=`\nPOLICIES SOLD THIS WEEK (${wPol})\n${ln(60)}\n`;
-  if(wcLeads.length){txt+=pad('Customer',20)+pad('Line',12)+pad('Premium',10)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wcLeads.forEach(l=>{const pols=(l.quotes&&l.quotes.length)?l.quotes:[{line:l.line,premium:l.premium}];pols.forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+pad(getProd(l.agentId).slice(0,15),16)+fmtDt(l.closedDate||l.date)+'\n';});});}else{txt+='No policies sold this week.\n';}
+  if(wcLeads.length){txt+=pad('Customer',20)+pad('Line',12)+pad('Premium',10)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wcLeads.forEach(l=>{soldQuotesOf(l).forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+pad(getProd(l.agentId).slice(0,15),16)+fmtDt(l.closedDate||l.date)+'\n';});});}else{txt+='No policies sold this week.\n';}
   txt+=`\n${'='.repeat(60)}\nSent by AgencyPro CRM — Allen Insurance Agency, Colleyville TX\n`;
 
   // ── HTML ──
@@ -227,7 +231,7 @@ export default async function handler() {
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No quotes this week</td></tr>';
 
   const cRows = wcLeads.length
-    ? wcLeads.flatMap(l=>{const pols=(l.quotes&&l.quotes.length)?l.quotes:[{line:l.line,premium:l.premium}];return pols.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(l.closedDate||l.date)}</td></tr>`);}).join('')
+    ? wcLeads.flatMap(l=>soldQuotesOf(l).map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(l.closedDate||l.date)}</td></tr>`)).join('')
     : '<tr><td colspan="5" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No policies sold this week</td></tr>';
 
   const html = `<!DOCTYPE html><html><body style="font-family:'Helvetica Neue',Arial,sans-serif;color:#1e293b;margin:0;padding:0;background:#f1f5f9">

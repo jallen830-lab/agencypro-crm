@@ -1298,13 +1298,16 @@ function leadPolicyCount(lead){
   if(lead.quotes && lead.quotes.length > 0) return lead.quotes.length;
   return 1;
 }
-// Like leadPolicyCount, but excludes quotes explicitly marked 'not-sold' —
-// use this (not leadPolicyCount) anywhere you're counting CLOSED/SOLD policies,
-// since a lead can have some quotes sold and others declined (see markQuoteSold/
-// markQuoteNotSold). Unmarked quotes (no status field — legacy records, or a
-// quote nobody has flagged yet) still count, matching prior behavior.
+// Per-quote outcome helpers — see the "PER-QUOTE OUTCOMES" comment near saveLead.
+// A quote "counts as sold" unless it's explicitly closed-lost, on-hold, or the
+// legacy 'not-sold'. Unset/'closed-won'/legacy 'sold' all count.
+const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
+const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
+const quoteIsLost = q => !!q && (q.status==='closed-lost' || q.status==='not-sold');
+// Like leadPolicyCount, but only counts quote lines that actually sold —
+// use this (not leadPolicyCount) anywhere you're counting CLOSED/SOLD policies.
 function soldPolicyCount(lead){
-  if(lead.quotes && lead.quotes.length > 0) return lead.quotes.filter(q=>q.status!=='not-sold').length;
+  if(lead.quotes && lead.quotes.length > 0) return lead.quotes.filter(quoteIsSold).length;
   return 1;
 }
 
@@ -2503,7 +2506,7 @@ function renderLeads(){
       <td><span class="badge ${statusClass(l.status)}">${l.status}</span></td>
       <td style="font-weight:600;color:var(--teal)">${fmt$(l.premium)}</td>
       <td style="color:var(--muted)">${fmtDate(l.date)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="showLeadQuotes('${l.id}')">📋 Quotes</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
     </tr>`).join(''):'<tr><td colspan="8" class="empty-state">No leads match your filters</td></tr>';
 }
 async function deleteLead(id){
@@ -2597,7 +2600,6 @@ function renderPipeline(){
               <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(l.premium)}</span>
               <div style="display:flex;align-items:center;gap:4px">
                 <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
-                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();showLeadQuotes('${l.id}')" title="View/mark quotes">📋</button>
                 <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();deleteLead('${l.id}')" title="Delete this lead">🗑</button>
               </div>
             </div>
@@ -2895,7 +2897,7 @@ function renderScoreboard(){
                 return leads.map((l,i) => {
                   const isCrossSell = !!l.crossSellRef;
                   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
-                  const soldOnly = (l.quotes||[]).filter(q=>q.status!=='not-sold');
+                  const soldOnly = (l.quotes||[]).filter(quoteIsSold);
                   const policies = soldOnly.length ? soldOnly : (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line||'—',carrier:l.carrier||'—',premium:l.premium||0}];
                   const isFirst = i===0;
                   return policies.map((q,qi) => {
@@ -3077,7 +3079,7 @@ function primeFolioCounts(){
     if(d < folio.periodStart || d > end) return;
     const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line, carrier:l.carrier}];
     quotes.forEach(q=>{
-      if(q.status==='not-sold') return;
+      if(!quoteIsSold(q)) return;
       const line = q.line || l.line;
       if(line==='Life'){ if(isFarmersCarrier(q.carrier)) counts.lifeIP++; }
       else if(line==='Commercial'){ if(isFarmersCarrier(q.carrier)) counts.biNB++; }
@@ -3779,6 +3781,17 @@ function buildQuoteRow(q, i){
         <input class="form-input qr-renewal" type="date" value="${q.renewalDate||''}">
       </div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Quote Outcome</label>
+        <select class="form-input qr-status">
+          <option value="">Open — not decided</option>
+          <option value="closed-won"${(q.status==='closed-won'||q.status==='sold')?' selected':''}>✅ Closed Won</option>
+          <option value="closed-lost"${(q.status==='closed-lost'||q.status==='not-sold')?' selected':''}>✕ Closed Lost (→ Remarketing)</option>
+          <option value="on-hold"${q.status==='on-hold'?' selected':''}>⏸ On Hold</option>
+        </select>
+      </div>
+      <div class="form-group"></div>
+    </div>
   </div>`;
 }
 
@@ -3787,7 +3800,7 @@ function addQuoteRow(){
   const container = document.getElementById('quotes-container');
   const i = container.querySelectorAll('.quote-row').length;
   const div = document.createElement('div');
-  div.innerHTML = buildQuoteRow({line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}, i);
+  div.innerHTML = buildQuoteRow({line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:'',status:''}, i);
   container.appendChild(div.firstChild);
 }
 function removeQuoteRow(i){
@@ -3812,77 +3825,21 @@ function collectQuotes(){
     notes:   row.querySelector('.qr-notes')?.value.trim()||'',
     currentCarrier: row.querySelector('.qr-currcarrier')?.value.trim()||'',
     renewalDate:    row.querySelector('.qr-renewal')?.value||'',
-  })).filter(q=>q.carrier||q.premium||q.currentCarrier||q.renewalDate);
+    status:  row.querySelector('.qr-status')?.value||'',
+  })).filter(q=>q.carrier||q.premium||q.currentCarrier||q.renewalDate||q.status);
 }
 
-// ── PER-QUOTE SOLD / NOT SOLD ─────────────────────────────────────────
-// A lead can have multiple quotes (one per line of business) that close
-// independently — e.g. Auto sells, Home doesn't. Each quote gets its own
-// status ('sold' | 'not-sold' | unset/open) instead of relying solely on
-// the lead's overall status. Marking a quote Sold closes the lead (if not
-// already) so the customer shows up correctly; marking Not Sold leaves the
-// rest of the lead untouched and auto-drops just that line into the
-// existing Remarketing sequence (Month 3/6/9) so it keeps getting worked
-// without needing a duplicate lead record.
-function showLeadQuotes(leadId){
-  const lead = DB.leads.find(l=>l.id===leadId);
-  if(!lead) return;
-  const name = `${lead.firstName||''} ${lead.lastName||''}`.trim();
-  const quotes = lead.quotes && lead.quotes.length ? lead.quotes : [{line:lead.line,carrier:lead.carrier,premium:lead.premium}];
-  const statusBadge = q => {
-    if(q.status==='sold') return `<span class="badge badge-green">✅ Sold</span>`;
-    if(q.status==='not-sold') return `<span class="badge badge-gray">✕ Not Sold — in Remarketing</span>`;
-    return `<span class="badge badge-blue">Open</span>`;
-  };
-  const html = `<div class="modal-title">📋 Quotes — ${name}</div>
-    <div style="display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto">
-      ${quotes.map((q,i)=>`
-        <div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <div style="flex:1;min-width:140px">
-            <div style="font-weight:600;font-size:13px">${q.line||'—'}${q.carrier?` — ${q.carrier}`:''}</div>
-            <div style="font-size:12px;color:var(--muted)">${fmt$(q.premium||0)}${q.currentCarrier?` &bull; was with ${q.currentCarrier}`:''}</div>
-          </div>
-          ${statusBadge(q)}
-          ${(!q.status) ? `
-            <div style="display:flex;gap:6px">
-              <button class="btn btn-primary btn-sm" onclick="markQuoteSold('${leadId}',${i})">✅ Sold</button>
-              <button class="btn btn-ghost btn-sm" onclick="markQuoteNotSold('${leadId}',${i})">✕ Not Sold</button>
-            </div>` : ''}
-        </div>`).join('')}
-    </div>
-    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
-  document.getElementById('overlay').style.display='flex';
-  document.getElementById('modal-content').innerHTML = html;
-}
-
-async function markQuoteSold(leadId, quoteIndex){
-  const lead = DB.leads.find(l=>l.id===leadId);
-  if(!lead || !lead.quotes || !lead.quotes[quoteIndex]) return;
-  const quotes = lead.quotes.map((q,i)=> i===quoteIndex ? {...q, status:'sold'} : q);
-  const premium = quotes.filter(q=>q.status!=='not-sold').reduce((s,q)=>s+Number(q.premium||0),0);
-  const update = { quotes, premium };
-  if(lead.status !== 'Closed Won'){
-    update.status = 'Closed Won';
-    update.closedDate = new Date().toISOString().slice(0,10);
-  }
-  await db.collection('leads').doc(leadId).update(update);
-  logActivity('✅','#dcfce7',`${quotes[quoteIndex].line||'Policy'} marked sold for <b>${lead.firstName} ${lead.lastName}</b>`);
-  toast('✅ Marked sold!');
-  showLeadQuotes(leadId);
-}
-
-async function markQuoteNotSold(leadId, quoteIndex){
-  const lead = DB.leads.find(l=>l.id===leadId);
-  if(!lead || !lead.quotes || !lead.quotes[quoteIndex]) return;
-  const line = lead.quotes[quoteIndex].line || 'Insurance';
-  const quotes = lead.quotes.map((q,i)=> i===quoteIndex ? {...q, status:'not-sold'} : q);
-  const premium = quotes.filter(q=>q.status!=='not-sold').reduce((s,q)=>s+Number(q.premium||0),0);
-  await db.collection('leads').doc(leadId).update({ quotes, premium });
-  await createRemarketingTouchpointTasks(leadId, {...lead, line});
-  logActivity('🔄','#ede9fe',`${line} quote for <b>${lead.firstName} ${lead.lastName}</b> marked not sold — moved to Remarketing`);
-  toast(`Marked not sold — ${line} added to Remarketing`);
-  showLeadQuotes(leadId);
-}
+// ── PER-QUOTE OUTCOMES ───────────────────────────────────────────────
+// A lead can have multiple quotes (one per line) that close independently
+// — e.g. Auto closes won, Home closes lost. Each quote carries its own
+// `status`: '' (open) | 'closed-won' | 'closed-lost' | 'on-hold', set via
+// the "Quote Outcome" dropdown on the quote rows in the lead form.
+// Helpers (quoteIsSold / quoteIsLost / QUOTE_NONSOLD_STATUSES) live up by
+// soldPolicyCount. Only closed-won quotes (plus unset, and legacy 'sold')
+// count toward premium / policy counts / Agency Goals. A quote newly set
+// to 'closed-lost' auto-drops that line into the Remarketing sequence
+// (Month 3/6/9); marking any quote closed-won flips the lead to Closed
+// Won if it isn't already. Both handled in saveLead().
 
 async function saveLead(id){
   const fn=document.getElementById('l-fn').value.trim(),ln=document.getElementById('l-ln').value.trim();
@@ -3890,7 +3847,7 @@ async function saveLead(id){
   const isCommercial = document.getElementById('l-lt').value === 'Commercial';
   const quotes = collectQuotes();
   const primary = quotes[0]||{};
-  const totalPremium = quotes.reduce((s,q)=>s+q.premium,0);
+  const totalPremium = quotes.filter(quoteIsSold).reduce((s,q)=>s+q.premium,0);
   const source = document.getElementById('l-src').value;
   const refPartnerId = source==='Referral' ? (document.getElementById('l-refpartner')?.value||'') : '';
   const refPartner = refPartnerId ? DB.referralPartners.find(p=>p.id===refPartnerId) : null;
@@ -3906,7 +3863,7 @@ async function saveLead(id){
     referralPartnerName: refPartner?refPartner.name:'',
     agentId:document.getElementById('l-ag').value,
     status:document.getElementById('l-st').value,
-    premium: totalPremium||Number(primary.premium)||0,
+    premium: totalPremium,
     date:document.getElementById('l-dt').value,
     notes:document.getElementById('l-nt').value.trim(),
     quotes: quotes,
@@ -3915,6 +3872,10 @@ async function saveLead(id){
     businessType:  isCommercial ? (document.getElementById('l-biztype')?.value||'') : '',
     industry:      isCommercial ? (document.getElementById('l-industry')?.value.trim()||'') : '',
   };
+  // Any quote marked Closed Won means the lead itself is Closed Won
+  if(quotes.some(q=>q.status==='closed-won') && data.status!=='Closed Won'){
+    data.status = 'Closed Won';
+  }
   const prevLead = id ? DB.leads.find(l=>l.id===id) : null;
   const prevStatus = prevLead?.status||null;
   const isNowClosed = data.status==='Closed Won' && prevStatus!=='Closed Won';
@@ -3938,6 +3899,18 @@ async function saveLead(id){
   // Auto-cancel open quoted follow-up tasks when lead leaves Quoted stage
   if(isLeavingQuoted && savedId){
     await cancelQuotedFollowUpTasks(savedId, data.status);
+  }
+
+  // Each quote line newly marked "Closed Lost" drops into the Remarketing
+  // sequence (Month 3/6/9) — only fire for lines that weren't lost before.
+  if(savedId){
+    const prevLostLines = new Set((prevLead?.quotes||[]).filter(quoteIsLost).map(q=>q.line));
+    for(const q of quotes){
+      if(quoteIsLost(q) && !prevLostLines.has(q.line)){
+        await createRemarketingTouchpointTasks(savedId, {...data, line:q.line});
+        logActivity('🔄','#ede9fe',`${q.line} quote for <b>${fn} ${ln}</b> closed lost — added to Remarketing`);
+      }
+    }
   }
 
   // Newly Closed Won — celebrate for everyone currently in the CRM

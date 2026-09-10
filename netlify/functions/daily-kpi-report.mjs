@@ -45,6 +45,8 @@ async function firestoreGetDoc(projectId, apiKey, path) {
 }
 
 // ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
+const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
+const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const isFarmersCarrier = carrier => String(carrier||'').toLowerCase().includes('farmers');
 const isPersonalLinesCarrier = carrier => {
@@ -56,7 +58,7 @@ function calcAgencyGoals(fcLeads, primeTargets) {
   fcLeads.forEach(l => {
     const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{ line: l.line, carrier: l.carrier }];
     quotes.forEach(q => {
-      if (q.status === 'not-sold') return;
+      if (!quoteIsSold(q)) return;
       const line = q.line || l.line;
       if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
       else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
@@ -103,7 +105,9 @@ function getFolioPeriod(today) {
   return { periodStart:s, periodEnd:e, label:`${fmt(s)} – ${e.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` };
 }
 
-const polCount  = l => (l.quotes&&l.quotes.length) ? l.quotes.length : 1;
+// Only quote lines that actually closed won (see quoteIsSold) count as sold policies.
+const soldQuotesOf = l => (l.quotes&&l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{line:l.line,premium:l.premium}];
+const polCount  = l => soldQuotesOf(l).length;
 const expandQ   = l => {
   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
   if (l.quotes&&l.quotes.length) return l.quotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0}));
@@ -188,7 +192,7 @@ export default async function handler() {
   txt+=`QUOTES TODAY (${tqRows.length})\n${ln(60)}\n`;
   if(tqRows.length){txt+=pad('Customer',24)+pad('Line',16)+'Producer\n'+ln(60)+'\n';tqRows.forEach(q=>{txt+=pad(q.name.slice(0,23),24)+pad((q.line||'—').slice(0,15),16)+getProd(q.agentId)+'\n';});}else{txt+='No quotes today.\n';}
   txt+=`\nPOLICIES SOLD TODAY (${tPol})\n${ln(60)}\n`;
-  if(tcLeads.length){txt+=pad('Customer',22)+pad('Line',12)+pad('Premium',10)+'Producer\n'+ln(60)+'\n';tcLeads.forEach(l=>{const pols=(l.quotes&&l.quotes.length)?l.quotes:[{line:l.line,premium:l.premium}];pols.forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,21),22)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+getProd(l.agentId)+'\n';});});}else{txt+='No policies sold today.\n';}
+  if(tcLeads.length){txt+=pad('Customer',22)+pad('Line',12)+pad('Premium',10)+'Producer\n'+ln(60)+'\n';tcLeads.forEach(l=>{soldQuotesOf(l).forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,21),22)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+getProd(l.agentId)+'\n';});});}else{txt+='No policies sold today.\n';}
   txt+=`\n${'='.repeat(60)}\nSent by AgencyPro CRM — Allen Insurance Agency, Colleyville TX\n`;
 
   // ── HTML ──
@@ -207,7 +211,7 @@ export default async function handler() {
     : '<tr><td colspan="3" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No quotes today</td></tr>';
 
   const cRows = tcLeads.length
-    ? tcLeads.flatMap(l=>{const pols=(l.quotes&&l.quotes.length)?l.quotes:[{line:l.line,premium:l.premium}];return pols.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td></tr>`);}).join('')
+    ? tcLeads.flatMap(l=>soldQuotesOf(l).map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td></tr>`)).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No policies sold today</td></tr>';
 
   const html = `<!DOCTYPE html><html><body style="font-family:'Helvetica Neue',Arial,sans-serif;color:#1e293b;margin:0;padding:0;background:#f1f5f9">
