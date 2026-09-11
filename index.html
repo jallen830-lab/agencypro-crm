@@ -2051,6 +2051,11 @@ function renderKPIs(){
   if(leadsTodayList){
     leadsTodayList.innerHTML = newLeadsToday.length
       ? renderKPITable(producers, leadsByProdToday, newLeadsToday, false, {groupField:'source', unitLabel:'lead'})
+        + renderKPINameList(newLeadsToday, [
+            {label:'Name',     value:l=>`${l.firstName||''} ${l.lastName||''}`.trim()||'—'},
+            {label:'Source',   value:l=>l.source||'—'},
+            {label:'Producer', value:l=>agentName(l.agentId)},
+          ])
       : '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No new leads entered today yet.</div>';
   }
 
@@ -2078,7 +2083,13 @@ function renderKPIs(){
         leadDayMap[day][pid] = (leadDayMap[day][pid]||0) + 1;
       });
       leadsFolioList.innerHTML = renderFolioDailyTable(leadDayMap, producers, leadsByProdFolio, newLeadsFolio.length, today)
-        + renderKPITable(producers, leadsByProdFolio, newLeadsFolio, true, {groupField:'source', unitLabel:'lead'});
+        + renderKPITable(producers, leadsByProdFolio, newLeadsFolio, true, {groupField:'source', unitLabel:'lead'})
+        + renderKPINameList(newLeadsFolio, [
+            {label:'Name',     value:l=>`${l.firstName||''} ${l.lastName||''}`.trim()||'—'},
+            {label:'Source',   value:l=>l.source||'—'},
+            {label:'Producer', value:l=>agentName(l.agentId)},
+            {label:'Date',     value:l=>fmtDate(l.date)},
+          ]);
     }
   }
 
@@ -2137,7 +2148,12 @@ function renderKPIs(){
   if(!todayRows.length){
     todayList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No quotes entered today yet.</div>';
   } else {
-    todayList.innerHTML = renderKPITable(producers, todayByProd, todayRows);
+    todayList.innerHTML = renderKPITable(producers, todayByProd, todayRows)
+      + renderKPINameList(todayRows, [
+          {label:'Name',     value:q=>q.leadName||'—'},
+          {label:'Line',     value:q=>q.line||'—'},
+          {label:'Producer', value:q=>agentName(q.agentId)},
+        ]);
   }
 
   // ── FOLIO ──
@@ -2166,8 +2182,36 @@ function renderKPIs(){
     folioList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No quotes in this folio period yet.</div>';
   } else {
     folioList.innerHTML = renderFolioDailyTable(dayMap, producers, folioByProd, folioRows.length, today)
-      + renderKPITable(producers, folioByProd, folioRows, true);
+      + renderKPITable(producers, folioByProd, folioRows, true)
+      + renderKPINameList(folioRows, [
+          {label:'Name',     value:q=>q.leadName||'—'},
+          {label:'Line',     value:q=>q.line||'—'},
+          {label:'Producer', value:q=>agentName(q.agentId)},
+          {label:'Date',     value:q=>fmtDate(q.quotedDate||q.date)},
+        ]);
   }
+}
+
+// Simple name/detail list — used to surface the actual customer names behind
+// a KPI count (New Leads and Quotes cards above), not just the aggregate stats.
+function renderKPINameList(rows, cols){
+  if(!rows.length) return '';
+  return `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            ${cols.map(c=>`<th style="padding:6px 10px;text-align:left;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px">${c.label}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>`<tr style="border-bottom:1px solid var(--border)">
+            ${cols.map(c=>`<td style="padding:6px 10px;color:var(--text)">${c.value(r)}</td>`).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 // Shared "date x producer" breakdown table for a folio period — used by both
