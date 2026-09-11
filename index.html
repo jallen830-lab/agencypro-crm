@@ -855,6 +855,13 @@ select.form-input{cursor:pointer}
       <div class="view" id="view-kpis">
         <div class="card" style="margin-bottom:14px">
           <div class="card-header">
+            <div class="card-title">👤 New Leads — Today</div>
+            <span style="font-size:12px;color:var(--muted)" id="kpi-leads-today-date"></span>
+          </div>
+          <div id="kpi-leads-today-list"></div>
+        </div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header">
             <div class="card-title">🎯 Quotes — Today</div>
             <div style="display:flex;align-items:center;gap:10px">
               <span style="font-size:12px;color:var(--muted)" id="kpi-today-date"></span>
@@ -864,6 +871,13 @@ select.form-input{cursor:pointer}
             </div>
           </div>
           <div id="kpi-today-list"></div>
+        </div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header">
+            <div class="card-title">👤 New Leads — Current Folio Period</div>
+            <span style="font-size:12px;color:var(--muted)" id="kpi-leads-folio-label"></span>
+          </div>
+          <div id="kpi-leads-folio-list"></div>
         </div>
         <div class="card">
           <div class="card-header">
@@ -2007,13 +2021,66 @@ function renderKPIs(){
   const folioEl   = document.getElementById('kpi-folio-label');
   const todayList = document.getElementById('kpi-today-list');
   const folioList = document.getElementById('kpi-folio-list');
+  const leadsTodayDateEl  = document.getElementById('kpi-leads-today-date');
+  const leadsFolioLabelEl = document.getElementById('kpi-leads-folio-label');
+  const leadsTodayList    = document.getElementById('kpi-leads-today-list');
+  const leadsFolioList    = document.getElementById('kpi-leads-folio-list');
   if(!todayList || !folioList) return;
 
   if(dateEl)  dateEl.textContent  = fmtDate(today);
   if(folioEl) folioEl.textContent = folio.label;
+  if(leadsTodayDateEl)  leadsTodayDateEl.textContent  = fmtDate(today);
+  if(leadsFolioLabelEl) leadsFolioLabelEl.textContent = folio.label;
 
   const producers = DB.producers;
   const allLeads  = DB.leads;
+
+  // ── NEW LEADS ── genuine new prospects only — excludes existing-customer
+  // file conversions and cross-sell production records (customerType set),
+  // counted by the lead's Date field (same field shown/edited on the lead form).
+  const isGenuineLead = l => !l.customerType;
+
+  const newLeadsToday = allLeads.filter(l => isGenuineLead(l) && l.date === today);
+  const leadsByProdToday = {};
+  producers.forEach(p => { leadsByProdToday[p.id] = []; });
+  leadsByProdToday['__unassigned'] = [];
+  newLeadsToday.forEach(l => {
+    const pid = l.agentId && producers.find(p=>p.id===l.agentId) ? l.agentId : '__unassigned';
+    leadsByProdToday[pid].push(l);
+  });
+  if(leadsTodayList){
+    leadsTodayList.innerHTML = newLeadsToday.length
+      ? renderKPITable(producers, leadsByProdToday, newLeadsToday, false, {groupField:'source', unitLabel:'lead'})
+      : '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No new leads entered today yet.</div>';
+  }
+
+  const newLeadsFolio = allLeads.filter(l => {
+    if(!isGenuineLead(l) || !l.date) return false;
+    const d = new Date(l.date + 'T00:00:00');
+    return d >= folio.periodStart && d <= folioEnd;
+  });
+  const leadsByProdFolio = {};
+  producers.forEach(p => { leadsByProdFolio[p.id] = []; });
+  leadsByProdFolio['__unassigned'] = [];
+  newLeadsFolio.forEach(l => {
+    const pid = l.agentId && producers.find(p=>p.id===l.agentId) ? l.agentId : '__unassigned';
+    leadsByProdFolio[pid].push(l);
+  });
+  if(leadsFolioList){
+    if(!newLeadsFolio.length){
+      leadsFolioList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No new leads entered in this folio period yet.</div>';
+    } else {
+      const leadDayMap = {};
+      newLeadsFolio.forEach(l => {
+        const day = l.date;
+        if(!leadDayMap[day]) leadDayMap[day] = {};
+        const pid = l.agentId || '__unassigned';
+        leadDayMap[day][pid] = (leadDayMap[day][pid]||0) + 1;
+      });
+      leadsFolioList.innerHTML = renderFolioDailyTable(leadDayMap, producers, leadsByProdFolio, newLeadsFolio.length, today)
+        + renderKPITable(producers, leadsByProdFolio, newLeadsFolio, true, {groupField:'source', unitLabel:'lead'});
+    }
+  }
 
   // Expand a lead into individual quote rows — each quote row = 1 quote
   function expandQuotes(lead){
@@ -2098,49 +2165,55 @@ function renderKPIs(){
   if(!folioRows.length){
     folioList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No quotes in this folio period yet.</div>';
   } else {
-    const prodCols      = producers.filter(p => folioByProd[p.id]?.length > 0);
-    const hasUnassigned = folioByProd['__unassigned']?.length > 0;
-
-    let html = `<div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border)">
-            <th style="padding:8px 12px;text-align:left;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Date</th>
-            ${prodCols.map(p=>`<th style="padding:8px 12px;text-align:center;color:${p.color||'#94a3b8'};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${p.name}</th>`).join('')}
-            ${hasUnassigned?'<th style="padding:8px 12px;text-align:center;color:var(--muted);font-size:11px;font-weight:600">Unassigned</th>':''}
-            <th style="padding:8px 12px;text-align:center;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${sortedDays.map(day => {
-            const dayTotal = Object.values(dayMap[day]).reduce((s,n)=>s+n,0);
-            const isToday  = day === today;
-            return `<tr style="border-bottom:1px solid var(--border);${isToday?'background:#f0fdf4;font-weight:600':''}">
-              <td style="padding:8px 12px">${fmtDate(day)}${isToday?' <span style="background:#22c55e;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600">Today</span>':''}</td>
-              ${prodCols.map(p=>{
-                const cnt = dayMap[day][p.id]||0;
-                return `<td style="padding:8px 12px;text-align:center">
-                  ${cnt?`<span style="display:inline-block;min-width:28px;background:${p.color||'#94a3b8'}22;color:${p.color||'#94a3b8'};border-radius:6px;padding:2px 8px;font-weight:700">${cnt}</span>`:'<span style="color:#e2e8f0">—</span>'}
-                </td>`;
-              }).join('')}
-              ${hasUnassigned?`<td style="padding:8px 12px;text-align:center">${dayMap[day]['__unassigned']||'<span style="color:#e2e8f0">—</span>'}</td>`:''}
-              <td style="padding:8px 12px;text-align:center;font-weight:700">${dayTotal}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--border);background:#f8fafc;font-weight:700">
-            <td style="padding:10px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.5px">Folio Total</td>
-            ${prodCols.map(p=>`<td style="padding:10px 12px;text-align:center;color:${p.color||'#94a3b8'};font-size:14px">${folioByProd[p.id]?.length||0}</td>`).join('')}
-            ${hasUnassigned?`<td style="padding:10px 12px;text-align:center">${folioByProd['__unassigned']?.length||0}</td>`:''}
-            <td style="padding:10px 12px;text-align:center;font-size:15px;color:var(--teal)">${folioRows.length}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    ${renderKPITable(producers, folioByProd, folioRows, true)}`;
-    folioList.innerHTML = html;
+    folioList.innerHTML = renderFolioDailyTable(dayMap, producers, folioByProd, folioRows.length, today)
+      + renderKPITable(producers, folioByProd, folioRows, true);
   }
+}
+
+// Shared "date x producer" breakdown table for a folio period — used by both
+// the Quotes and New Leads KPI cards above.
+function renderFolioDailyTable(dayMap, producers, byProd, totalCount, today){
+  const sortedDays    = Object.keys(dayMap).sort((a,b)=>b.localeCompare(a));
+  const prodCols      = producers.filter(p => byProd[p.id]?.length > 0);
+  const hasUnassigned = byProd['__unassigned']?.length > 0;
+
+  return `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border)">
+          <th style="padding:8px 12px;text-align:left;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Date</th>
+          ${prodCols.map(p=>`<th style="padding:8px 12px;text-align:center;color:${p.color||'#94a3b8'};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${p.name}</th>`).join('')}
+          ${hasUnassigned?'<th style="padding:8px 12px;text-align:center;color:var(--muted);font-size:11px;font-weight:600">Unassigned</th>':''}
+          <th style="padding:8px 12px;text-align:center;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sortedDays.map(day => {
+          const dayTotal = Object.values(dayMap[day]).reduce((s,n)=>s+n,0);
+          const isToday  = day === today;
+          return `<tr style="border-bottom:1px solid var(--border);${isToday?'background:#f0fdf4;font-weight:600':''}">
+            <td style="padding:8px 12px">${fmtDate(day)}${isToday?' <span style="background:#22c55e;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600">Today</span>':''}</td>
+            ${prodCols.map(p=>{
+              const cnt = dayMap[day][p.id]||0;
+              return `<td style="padding:8px 12px;text-align:center">
+                ${cnt?`<span style="display:inline-block;min-width:28px;background:${p.color||'#94a3b8'}22;color:${p.color||'#94a3b8'};border-radius:6px;padding:2px 8px;font-weight:700">${cnt}</span>`:'<span style="color:#e2e8f0">—</span>'}
+              </td>`;
+            }).join('')}
+            ${hasUnassigned?`<td style="padding:8px 12px;text-align:center">${dayMap[day]['__unassigned']||'<span style="color:#e2e8f0">—</span>'}</td>`:''}
+            <td style="padding:8px 12px;text-align:center;font-weight:700">${dayTotal}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--border);background:#f8fafc;font-weight:700">
+          <td style="padding:10px 12px;font-size:12px;text-transform:uppercase;letter-spacing:.5px">Folio Total</td>
+          ${prodCols.map(p=>`<td style="padding:10px 12px;text-align:center;color:${p.color||'#94a3b8'};font-size:14px">${byProd[p.id]?.length||0}</td>`).join('')}
+          ${hasUnassigned?`<td style="padding:10px 12px;text-align:center">${byProd['__unassigned']?.length||0}</td>`:''}
+          <td style="padding:10px 12px;text-align:center;font-size:15px;color:var(--teal)">${totalCount}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>`;
 }
 
 
@@ -2295,18 +2368,20 @@ function sendDailyReport(){
 }
 // ─────────────────────────────────────────────────────────────────────
 
-function renderKPITable(producers, byProducer, allRows, showSummaryOnly=false){
+function renderKPITable(producers, byProducer, allRows, showSummaryOnly=false, opts={}){
+  const groupField = opts.groupField || 'line';
+  const unitLabel   = opts.unitLabel  || 'quote';
   const activeProd = producers.filter(p => byProducer[p.id]?.length > 0);
   const cards = activeProd.map(p => {
     const rows = byProducer[p.id]||[];
-    const byLine = {};
-    rows.forEach(q => { byLine[q.line||'Other'] = (byLine[q.line||'Other']||0)+1; });
+    const byGroup = {};
+    rows.forEach(q => { byGroup[q[groupField]||'Other'] = (byGroup[q[groupField]||'Other']||0)+1; });
     return `<div style="background:#f8fafc;border-radius:8px;padding:12px 14px;border-left:4px solid ${p.color||'#94a3b8'}">
       <div style="font-size:12px;font-weight:700;color:${p.color||'#94a3b8'};margin-bottom:4px">${p.name}</div>
       <div style="font-size:28px;font-weight:800;color:var(--text);line-height:1">${rows.length}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:2px">quote${rows.length!==1?'s':''}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">${unitLabel}${rows.length!==1?'s':''}</div>
       <div style="margin-top:8px;font-size:11px;color:var(--muted)">
-        ${Object.entries(byLine).sort((a,b)=>b[1]-a[1]).map(([line,n])=>`<div style="display:flex;justify-content:space-between;padding:1px 0"><span>${line}</span><span style="font-weight:600;color:var(--text)">${n}</span></div>`).join('')}
+        ${Object.entries(byGroup).sort((a,b)=>b[1]-a[1]).map(([g,n])=>`<div style="display:flex;justify-content:space-between;padding:1px 0"><span>${g}</span><span style="font-weight:600;color:var(--text)">${n}</span></div>`).join('')}
       </div>
     </div>`;
   }).join('');

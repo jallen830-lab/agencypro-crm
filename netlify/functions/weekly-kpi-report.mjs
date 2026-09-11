@@ -116,6 +116,10 @@ function getWeekPeriod(today) {
   return { weekStart:s, weekEnd:e, label:`${fmt(s)} – ${e.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` };
 }
 
+// A "new lead" is a genuine new prospect — excludes existing-customer file
+// conversions and cross-sell production records, both of which set customerType.
+const isGenuineLead = l => !l.customerType;
+
 // Only quote lines that actually closed won (see quoteIsSold) count as sold policies.
 const soldQuotesOf = l => (l.quotes&&l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{line:l.line,premium:l.premium}];
 const polCount  = l => soldQuotesOf(l).length;
@@ -163,6 +167,11 @@ export default async function handler() {
   });
   const wPol    = wcLeads.reduce((s,l)=>s+polCount(l),0);
   const wPrem   = wcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const wNewLeads = leads.filter(l => {
+    if (!isGenuineLead(l) || !l.date) return false;
+    const d = new Date(l.date+'T00:00:00');
+    return d>=week.weekStart && d<=week.weekEnd;
+  });
 
   // ── FOLIO ──
   const fqLeads = leads.filter(l => {
@@ -180,6 +189,11 @@ export default async function handler() {
   });
   const fPol  = fcLeads.reduce((s,l)=>s+polCount(l),0);
   const fPrem = fcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const fNewLeads = leads.filter(l => {
+    if (!isGenuineLead(l) || !l.date) return false;
+    const d = new Date(l.date+'T00:00:00');
+    return d>=folio.periodStart&&d<=folio.periodEnd;
+  });
 
   // ── AGENCY GOALS ──
   const agencyGoals = calcAgencyGoals(fcLeads, settings?.primeTargets);
@@ -194,8 +208,8 @@ export default async function handler() {
 
   // ── PLAIN TEXT ──
   let txt = `ALLEN INSURANCE AGENCY\nWeekly KPI Report — Week of ${week.label}\nFolio: ${folio.label}\n${'='.repeat(60)}\n\n`;
-  txt += `THIS WEEK\n${ln(60)}\nQuotes:    ${String(wqRows.length).padStart(6)}\nPolicies:  ${String(wPol).padStart(6)}\nPremium:   ${fmtDol(wPrem).padStart(10)}\n\n`;
-  txt += `FOLIO TO DATE\n${ln(60)}\nQuotes:    ${String(fqRows.length).padStart(6)}\nPolicies:  ${String(fPol).padStart(6)}\nPremium:   ${fmtDol(fPrem).padStart(10)}\n\n`;
+  txt += `THIS WEEK\n${ln(60)}\nNew Leads: ${String(wNewLeads.length).padStart(6)}\nQuotes:    ${String(wqRows.length).padStart(6)}\nPolicies:  ${String(wPol).padStart(6)}\nPremium:   ${fmtDol(wPrem).padStart(10)}\n\n`;
+  txt += `FOLIO TO DATE\n${ln(60)}\nNew Leads: ${String(fNewLeads.length).padStart(6)}\nQuotes:    ${String(fqRows.length).padStart(6)}\nPolicies:  ${String(fPol).padStart(6)}\nPremium:   ${fmtDol(fPrem).padStart(10)}\n\n`;
   txt += `AGENCY GOALS — THIS FOLIO (Farmers/BW/Foremost)\n${ln(60)}\n`;
   agencyGoals.forEach(g=>{
     const pct = g.target>0 ? Math.round((g.actual/g.target)*100) : 0;
@@ -209,7 +223,9 @@ export default async function handler() {
     txt+=pad(n.slice(0,17),col[0])+pad(d.qW,col[1],true)+pad(d.polW,col[2],true)+pad(fmtDol(d.premW),col[3],true)+pad(d.qF,col[4],true)+pad(d.polF,col[5],true)+pad(fmtDol(d.premF),col[6],true)+'\n';
   });
   txt+=ln(60)+'\n'+pad('TOTAL',col[0])+pad(wqRows.length,col[1],true)+pad(wPol,col[2],true)+pad(fmtDol(wPrem),col[3],true)+pad(fqRows.length,col[4],true)+pad(fPol,col[5],true)+pad(fmtDol(fPrem),col[6],true)+'\n\n';
-  txt+=`QUOTES THIS WEEK (${wqRows.length})\n${ln(60)}\n`;
+  txt+=`NEW LEADS THIS WEEK (${wNewLeads.length})\n${ln(60)}\n`;
+  if(wNewLeads.length){txt+=pad('Customer',22)+pad('Source',14)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wNewLeads.forEach(l=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,21),22)+pad((l.source||'—').slice(0,13),14)+pad(getProd(l.agentId).slice(0,15),16)+fmtDt(l.date)+'\n';});}else{txt+='No new leads entered this week.\n';}
+  txt+=`\nQUOTES THIS WEEK (${wqRows.length})\n${ln(60)}\n`;
   if(wqRows.length){txt+=pad('Customer',22)+pad('Line',14)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wqRows.forEach(q=>{txt+=pad(q.name.slice(0,21),22)+pad((q.line||'—').slice(0,13),14)+pad(getProd(q.agentId).slice(0,15),16)+fmtDt(q.date)+'\n';});}else{txt+='No quotes this week.\n';}
   txt+=`\nPOLICIES SOLD THIS WEEK (${wPol})\n${ln(60)}\n`;
   if(wcLeads.length){txt+=pad('Customer',20)+pad('Line',12)+pad('Premium',10)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wcLeads.forEach(l=>{soldQuotesOf(l).forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+pad(getProd(l.agentId).slice(0,15),16)+fmtDt(l.closedDate||l.date)+'\n';});});}else{txt+='No policies sold this week.\n';}
@@ -225,6 +241,10 @@ export default async function handler() {
     <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0ea5a0">${d.polF}</td>
     <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0ea5a0">${fmtDol(d.premF)}</td>
   </tr>`).join('')||'<tr><td colspan="7" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No activity this week</td></tr>';
+
+  const lRows = wNewLeads.length
+    ? wNewLeads.map(l=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.source||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(l.date)}</td></tr>`).join('')
+    : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No new leads this week</td></tr>';
 
   const qRows = wqRows.length
     ? wqRows.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.name}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(q.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(q.date)}</td></tr>`).join('')
@@ -242,6 +262,11 @@ export default async function handler() {
     <div style="color:#94a3b8;font-size:13px">Week of ${week.label} &nbsp;·&nbsp; Folio: ${folio.label}</div>
   </div>
   <div style="display:flex;gap:12px;margin-bottom:20px">
+    <div style="flex:1;background:#fff;border-radius:10px;padding:18px;border-top:4px solid #8b5cf6">
+      <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase">New Leads</div>
+      <div style="font-size:36px;font-weight:900;color:#8b5cf6;line-height:1.1;margin:6px 0 2px">${wNewLeads.length}</div>
+      <div style="font-size:11px;color:#94a3b8">entered this week</div>
+    </div>
     <div style="flex:1;background:#fff;border-radius:10px;padding:18px;border-top:4px solid #0ea5a0">
       <div style="font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase">Quotes This Week</div>
       <div style="font-size:36px;font-weight:900;color:#0ea5a0;line-height:1.1;margin:6px 0 2px">${wqRows.length}</div>
@@ -298,6 +323,18 @@ export default async function handler() {
         <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0;color:#0ea5a0">${fPol}</td>
         <td style="padding:10px 12px;text-align:center;border-top:2px solid #e2e8f0;color:#0ea5a0">${fmtDol(fPrem)}</td>
       </tr></tfoot>
+    </table>
+  </div>
+  <div style="background:#fff;border-radius:10px;margin-bottom:16px;overflow:hidden">
+    <div style="background:#1B3A5C;padding:14px 20px"><span style="color:#fff;font-size:14px;font-weight:700">New Leads Entered This Week</span></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;border-bottom:1px solid #e2e8f0">Customer</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;border-bottom:1px solid #e2e8f0">Source</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;border-bottom:1px solid #e2e8f0">Producer</th>
+        <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:11px;border-bottom:1px solid #e2e8f0">Date</th>
+      </tr></thead>
+      <tbody>${lRows}</tbody>
     </table>
   </div>
   <div style="background:#fff;border-radius:10px;margin-bottom:16px;overflow:hidden">
