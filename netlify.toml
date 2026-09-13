@@ -24,3 +24,6 @@
 
 [functions."send-referral-cadence-emails"]
   schedule = "0 15 * * *"
+
+[functions."send-new-customers-email"]
+  schedule = "0 23 * * *"
