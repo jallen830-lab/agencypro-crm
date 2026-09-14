@@ -44,26 +44,44 @@ async function firestoreGetDoc(projectId, apiKey, path) {
   return parseDoc(doc.fields || {});
 }
 
-// ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
+// ── SOLD-QUOTE TRACKING (mirrors index.html's soldEntries/leadSoldEntries —
+// see the "PER-QUOTE OUTCOMES" comment near saveLead there). A quote counts
+// toward production the moment IT closes won — dated by its own
+// closedDate — not when its whole lead finishes closing, and not by the
+// lead's overall status/closedDate. Legacy leads closed before soldQuotes
+// existed have no soldQuotes array; those fall back to the old whole-lead
+// accounting (quotes filtered by quoteIsSold, dated by the lead's own
+// closedDate) so historical reports don't change.
 const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
 const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
+function leadSoldEntries(l) {
+  if (Array.isArray(l.soldQuotes)) return l.soldQuotes;
+  if (l.status === 'Closed Won') {
+    const qs = (l.quotes && l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{ line: l.line, carrier: l.carrier, premium: l.premium || 0 }];
+    return qs.map(q => ({ ...q, closedDate: l.closedDate || l.date || '' }));
+  }
+  return [];
+}
+function soldEntries(leads) {
+  const out = [];
+  leads.forEach(l => { leadSoldEntries(l).forEach(q => out.push({ ...q, lead: l })); });
+  return out;
+}
+
+// ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const isFarmersCarrier = carrier => String(carrier||'').toLowerCase().includes('farmers');
 const isPersonalLinesCarrier = carrier => {
   const c = String(carrier||'').toLowerCase();
   return c.includes('farmers') || c.includes('bristol west') || c.includes('bw') || c.includes('foremost');
 };
-function calcAgencyGoals(fcLeads, primeTargets) {
+function calcAgencyGoals(soldFolioEntries, primeTargets) {
   const counts = { plSpecialty: 0, lifeIP: 0, biNB: 0 };
-  fcLeads.forEach(l => {
-    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{ line: l.line, carrier: l.carrier }];
-    quotes.forEach(q => {
-      if (!quoteIsSold(q)) return;
-      const line = q.line || l.line;
-      if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
-      else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
-      else if (PL_SPECIALTY_LINES.includes(line)) { if (isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
-    });
+  soldFolioEntries.forEach(q => {
+    const line = q.line || q.lead.line;
+    if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
+    else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
+    else if (PL_SPECIALTY_LINES.includes(line)) { if (isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
   });
   const t = primeTargets || {};
   return [
@@ -109,12 +127,14 @@ function getFolioPeriod(today) {
 // conversions and cross-sell production records, both of which set customerType.
 const isGenuineLead = l => !l.customerType;
 
-// Only quote lines that actually closed won (see quoteIsSold) count as sold policies.
-const soldQuotesOf = l => (l.quotes&&l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{line:l.line,premium:l.premium}];
-const polCount  = l => soldQuotesOf(l).length;
+// Every quote ever recorded on a lead — open plus the ones already moved
+// off to soldQuotes/lostQuotes once decided — so a quote that closed the
+// same day it was entered still shows up in "quotes entered" lists.
+const allQuotesOf = l => [...(l.quotes||[]), ...(l.soldQuotes||[]), ...(l.lostQuotes||[])];
 const expandQ   = l => {
   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
-  if (l.quotes&&l.quotes.length) return l.quotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0}));
+  const allQuotes = allQuotesOf(l);
+  if (allQuotes.length) return allQuotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0}));
   return [{name,agentId:l.agentId,line:l.line||'Other',premium:l.premium||0}];
 };
 
@@ -141,12 +161,17 @@ export default async function handler() {
   const today   = getTodayCST();
   const folio   = getFolioPeriod(today);
 
+  // ── SOLD QUOTES — new-business only, each dated by its own closedDate
+  // (a quote counts the moment IT closes, not when its whole lead does) ──
+  const nbLeads    = leads.filter(l => !(l.customerType==='existing'&&!l.crossSellRef));
+  const allSold    = soldEntries(nbLeads);
+
   // ── TODAY ──
   const tqLeads = leads.filter(l => l.quotedDate === today);
   const tqRows  = tqLeads.flatMap(expandQ);
-  const tcLeads = leads.filter(l => l.status==='Closed Won' && !(l.customerType==='existing'&&!l.crossSellRef) && (l.closedDate||'')===today);
-  const tPol    = tcLeads.reduce((s,l)=>s+polCount(l),0);
-  const tPrem   = tcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const tSold   = allSold.filter(q => q.closedDate === today);
+  const tPol    = tSold.length;
+  const tPrem   = tSold.reduce((s,q)=>s+Number(q.premium||0),0);
   const tNewLeads = leads.filter(l => isGenuineLead(l) && l.date === today);
 
   // ── FOLIO ──
@@ -158,13 +183,13 @@ export default async function handler() {
     return false;
   });
   const fqRows  = fqLeads.flatMap(expandQ);
-  const fcLeads = leads.filter(l => {
-    if (l.status!=='Closed Won'||(l.customerType==='existing'&&!l.crossSellRef)) return false;
-    const d=new Date((l.closedDate||l.date||'')+'T00:00:00');
+  const fSold   = allSold.filter(q => {
+    if (!q.closedDate) return false;
+    const d = new Date(q.closedDate+'T00:00:00');
     return d>=folio.periodStart&&d<=folio.periodEnd;
   });
-  const fPol  = fcLeads.reduce((s,l)=>s+polCount(l),0);
-  const fPrem = fcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const fPol  = fSold.length;
+  const fPrem = fSold.reduce((s,q)=>s+Number(q.premium||0),0);
   const fNewLeads = leads.filter(l => {
     if (!isGenuineLead(l) || !l.date) return false;
     const d = new Date(l.date+'T00:00:00');
@@ -172,15 +197,15 @@ export default async function handler() {
   });
 
   // ── AGENCY GOALS ──
-  const agencyGoals = calcAgencyGoals(fcLeads, settings?.primeTargets);
+  const agencyGoals = calcAgencyGoals(fSold, settings?.primeTargets);
 
   // ── PRODUCER STATS ──
   const prod = {};
   const ens  = n => { if(!prod[n]) prod[n]={qT:0,polT:0,premT:0,qF:0,polF:0,premF:0}; };
   tqRows.forEach(q  =>{const n=getProd(q.agentId);ens(n);prod[n].qT++;});
-  tcLeads.forEach(l =>{const n=getProd(l.agentId);ens(n);prod[n].polT+=polCount(l);prod[n].premT+=Number(l.premium||0);});
+  tSold.forEach(q   =>{const n=getProd(q.lead.agentId);ens(n);prod[n].polT+=1;prod[n].premT+=Number(q.premium||0);});
   fqRows.forEach(q  =>{const n=getProd(q.agentId);ens(n);prod[n].qF++;});
-  fcLeads.forEach(l =>{const n=getProd(l.agentId);ens(n);prod[n].polF+=polCount(l);prod[n].premF+=Number(l.premium||0);});
+  fSold.forEach(q   =>{const n=getProd(q.lead.agentId);ens(n);prod[n].polF+=1;prod[n].premF+=Number(q.premium||0);});
 
   // ── PLAIN TEXT ──
   let txt = `ALLEN INSURANCE AGENCY\nDaily KPI Report — ${fmtDt(today)}\nFolio: ${folio.label}\n${'='.repeat(60)}\n\n`;
@@ -204,7 +229,7 @@ export default async function handler() {
   txt+=`\nQUOTES TODAY (${tqRows.length})\n${ln(60)}\n`;
   if(tqRows.length){txt+=pad('Customer',24)+pad('Line',16)+'Producer\n'+ln(60)+'\n';tqRows.forEach(q=>{txt+=pad(q.name.slice(0,23),24)+pad((q.line||'—').slice(0,15),16)+getProd(q.agentId)+'\n';});}else{txt+='No quotes today.\n';}
   txt+=`\nPOLICIES SOLD TODAY (${tPol})\n${ln(60)}\n`;
-  if(tcLeads.length){txt+=pad('Customer',22)+pad('Line',12)+pad('Premium',10)+'Producer\n'+ln(60)+'\n';tcLeads.forEach(l=>{soldQuotesOf(l).forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,21),22)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+getProd(l.agentId)+'\n';});});}else{txt+='No policies sold today.\n';}
+  if(tSold.length){txt+=pad('Customer',22)+pad('Line',12)+pad('Premium',10)+'Producer\n'+ln(60)+'\n';tSold.forEach(q=>{txt+=pad(`${q.lead.firstName||''} ${q.lead.lastName||''}`.trim().slice(0,21),22)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||0),10)+getProd(q.lead.agentId)+'\n';});}else{txt+='No policies sold today.\n';}
   txt+=`\n${'='.repeat(60)}\nSent by AgencyPro CRM — Allen Insurance Agency, Colleyville TX\n`;
 
   // ── HTML ──
@@ -226,8 +251,8 @@ export default async function handler() {
     ? tqRows.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.name}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(q.agentId)}</td></tr>`).join('')
     : '<tr><td colspan="3" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No quotes today</td></tr>';
 
-  const cRows = tcLeads.length
-    ? tcLeads.flatMap(l=>soldQuotesOf(l).map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td></tr>`)).join('')
+  const cRows = tSold.length
+    ? tSold.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.lead.firstName||''} ${q.lead.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||q.lead.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(q.lead.agentId)}</td></tr>`).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No policies sold today</td></tr>';
 
   const html = `<!DOCTYPE html><html><body style="font-family:'Helvetica Neue',Arial,sans-serif;color:#1e293b;margin:0;padding:0;background:#f1f5f9">

@@ -44,26 +44,44 @@ async function firestoreGetDoc(projectId, apiKey, path) {
   return parseDoc(doc.fields || {});
 }
 
-// ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
+// ── SOLD-QUOTE TRACKING (mirrors index.html's soldEntries/leadSoldEntries —
+// see the "PER-QUOTE OUTCOMES" comment near saveLead there). A quote counts
+// toward production the moment IT closes won — dated by its own
+// closedDate — not when its whole lead finishes closing, and not by the
+// lead's overall status/closedDate. Legacy leads closed before soldQuotes
+// existed have no soldQuotes array; those fall back to the old whole-lead
+// accounting (quotes filtered by quoteIsSold, dated by the lead's own
+// closedDate) so historical reports don't change.
 const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
 const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
+function leadSoldEntries(l) {
+  if (Array.isArray(l.soldQuotes)) return l.soldQuotes;
+  if (l.status === 'Closed Won') {
+    const qs = (l.quotes && l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{ line: l.line, carrier: l.carrier, premium: l.premium || 0 }];
+    return qs.map(q => ({ ...q, closedDate: l.closedDate || l.date || '' }));
+  }
+  return [];
+}
+function soldEntries(leads) {
+  const out = [];
+  leads.forEach(l => { leadSoldEntries(l).forEach(q => out.push({ ...q, lead: l })); });
+  return out;
+}
+
+// ── AGENCY GOALS (mirrors the Scoreboard's Agency Goals card) ─────────
 const PL_SPECIALTY_LINES = ['Auto','Home','Umbrella','Specialty','Wind/Hail Buydown','Bundle'];
 const isFarmersCarrier = carrier => String(carrier||'').toLowerCase().includes('farmers');
 const isPersonalLinesCarrier = carrier => {
   const c = String(carrier||'').toLowerCase();
   return c.includes('farmers') || c.includes('bristol west') || c.includes('bw') || c.includes('foremost');
 };
-function calcAgencyGoals(fcLeads, primeTargets) {
+function calcAgencyGoals(soldFolioEntries, primeTargets) {
   const counts = { plSpecialty: 0, lifeIP: 0, biNB: 0 };
-  fcLeads.forEach(l => {
-    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{ line: l.line, carrier: l.carrier }];
-    quotes.forEach(q => {
-      if (!quoteIsSold(q)) return;
-      const line = q.line || l.line;
-      if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
-      else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
-      else if (PL_SPECIALTY_LINES.includes(line)) { if (isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
-    });
+  soldFolioEntries.forEach(q => {
+    const line = q.line || q.lead.line;
+    if (line === 'Life') { if (isFarmersCarrier(q.carrier)) counts.lifeIP++; }
+    else if (line === 'Commercial') { if (isFarmersCarrier(q.carrier)) counts.biNB++; }
+    else if (PL_SPECIALTY_LINES.includes(line)) { if (isPersonalLinesCarrier(q.carrier)) counts.plSpecialty++; }
   });
   const t = primeTargets || {};
   return [
@@ -120,12 +138,14 @@ function getWeekPeriod(today) {
 // conversions and cross-sell production records, both of which set customerType.
 const isGenuineLead = l => !l.customerType;
 
-// Only quote lines that actually closed won (see quoteIsSold) count as sold policies.
-const soldQuotesOf = l => (l.quotes&&l.quotes.length) ? l.quotes.filter(quoteIsSold) : [{line:l.line,premium:l.premium}];
-const polCount  = l => soldQuotesOf(l).length;
+// Every quote ever recorded on a lead — open plus the ones already moved
+// off to soldQuotes/lostQuotes once decided — so a quote that closed the
+// same week it was entered still shows up in "quotes entered" lists.
+const allQuotesOf = l => [...(l.quotes||[]), ...(l.soldQuotes||[]), ...(l.lostQuotes||[])];
 const expandQ   = l => {
   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
-  if (l.quotes&&l.quotes.length) return l.quotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0,date:l.quotedDate}));
+  const allQuotes = allQuotesOf(l);
+  if (allQuotes.length) return allQuotes.map(q=>({name,agentId:l.agentId,line:q.line||l.line||'Other',premium:q.premium||0,date:l.quotedDate}));
   return [{name,agentId:l.agentId,line:l.line||'Other',premium:l.premium||0,date:l.quotedDate}];
 };
 
@@ -153,6 +173,11 @@ export default async function handler() {
   const folio   = getFolioPeriod(today);
   const week    = getWeekPeriod(today);
 
+  // ── SOLD QUOTES — new-business only, each dated by its own closedDate
+  // (a quote counts the moment IT closes, not when its whole lead does) ──
+  const nbLeads = leads.filter(l => !(l.customerType==='existing'&&!l.crossSellRef));
+  const allSold = soldEntries(nbLeads);
+
   // ── THIS WEEK ──
   const wqLeads = leads.filter(l => {
     if (!l.quotedDate) return false;
@@ -160,13 +185,13 @@ export default async function handler() {
     return qd>=week.weekStart && qd<=week.weekEnd;
   });
   const wqRows  = wqLeads.flatMap(expandQ);
-  const wcLeads = leads.filter(l => {
-    if (l.status!=='Closed Won'||(l.customerType==='existing'&&!l.crossSellRef)) return false;
-    const d=new Date((l.closedDate||l.date||'')+'T00:00:00');
+  const wSold   = allSold.filter(q => {
+    if (!q.closedDate) return false;
+    const d = new Date(q.closedDate+'T00:00:00');
     return d>=week.weekStart&&d<=week.weekEnd;
   });
-  const wPol    = wcLeads.reduce((s,l)=>s+polCount(l),0);
-  const wPrem   = wcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const wPol    = wSold.length;
+  const wPrem   = wSold.reduce((s,q)=>s+Number(q.premium||0),0);
   const wNewLeads = leads.filter(l => {
     if (!isGenuineLead(l) || !l.date) return false;
     const d = new Date(l.date+'T00:00:00');
@@ -182,13 +207,13 @@ export default async function handler() {
     return false;
   });
   const fqRows  = fqLeads.flatMap(expandQ);
-  const fcLeads = leads.filter(l => {
-    if (l.status!=='Closed Won'||(l.customerType==='existing'&&!l.crossSellRef)) return false;
-    const d=new Date((l.closedDate||l.date||'')+'T00:00:00');
+  const fSold   = allSold.filter(q => {
+    if (!q.closedDate) return false;
+    const d = new Date(q.closedDate+'T00:00:00');
     return d>=folio.periodStart&&d<=folio.periodEnd;
   });
-  const fPol  = fcLeads.reduce((s,l)=>s+polCount(l),0);
-  const fPrem = fcLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+  const fPol  = fSold.length;
+  const fPrem = fSold.reduce((s,q)=>s+Number(q.premium||0),0);
   const fNewLeads = leads.filter(l => {
     if (!isGenuineLead(l) || !l.date) return false;
     const d = new Date(l.date+'T00:00:00');
@@ -196,15 +221,15 @@ export default async function handler() {
   });
 
   // ── AGENCY GOALS ──
-  const agencyGoals = calcAgencyGoals(fcLeads, settings?.primeTargets);
+  const agencyGoals = calcAgencyGoals(fSold, settings?.primeTargets);
 
   // ── PRODUCER STATS ──
   const prod = {};
   const ens  = n => { if(!prod[n]) prod[n]={qW:0,polW:0,premW:0,qF:0,polF:0,premF:0}; };
-  wqRows.forEach(q  =>{const n=getProd(q.agentId);ens(n);prod[n].qW++;});
-  wcLeads.forEach(l =>{const n=getProd(l.agentId);ens(n);prod[n].polW+=polCount(l);prod[n].premW+=Number(l.premium||0);});
-  fqRows.forEach(q  =>{const n=getProd(q.agentId);ens(n);prod[n].qF++;});
-  fcLeads.forEach(l =>{const n=getProd(l.agentId);ens(n);prod[n].polF+=polCount(l);prod[n].premF+=Number(l.premium||0);});
+  wqRows.forEach(q =>{const n=getProd(q.agentId);ens(n);prod[n].qW++;});
+  wSold.forEach(q  =>{const n=getProd(q.lead.agentId);ens(n);prod[n].polW+=1;prod[n].premW+=Number(q.premium||0);});
+  fqRows.forEach(q =>{const n=getProd(q.agentId);ens(n);prod[n].qF++;});
+  fSold.forEach(q  =>{const n=getProd(q.lead.agentId);ens(n);prod[n].polF+=1;prod[n].premF+=Number(q.premium||0);});
 
   // ── PLAIN TEXT ──
   let txt = `ALLEN INSURANCE AGENCY\nWeekly KPI Report — Week of ${week.label}\nFolio: ${folio.label}\n${'='.repeat(60)}\n\n`;
@@ -228,7 +253,7 @@ export default async function handler() {
   txt+=`\nQUOTES THIS WEEK (${wqRows.length})\n${ln(60)}\n`;
   if(wqRows.length){txt+=pad('Customer',22)+pad('Line',14)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wqRows.forEach(q=>{txt+=pad(q.name.slice(0,21),22)+pad((q.line||'—').slice(0,13),14)+pad(getProd(q.agentId).slice(0,15),16)+fmtDt(q.date)+'\n';});}else{txt+='No quotes this week.\n';}
   txt+=`\nPOLICIES SOLD THIS WEEK (${wPol})\n${ln(60)}\n`;
-  if(wcLeads.length){txt+=pad('Customer',20)+pad('Line',12)+pad('Premium',10)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wcLeads.forEach(l=>{soldQuotesOf(l).forEach(q=>{txt+=pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+pad(getProd(l.agentId).slice(0,15),16)+fmtDt(l.closedDate||l.date)+'\n';});});}else{txt+='No policies sold this week.\n';}
+  if(wSold.length){txt+=pad('Customer',20)+pad('Line',12)+pad('Premium',10)+pad('Producer',16)+'Date\n'+ln(60)+'\n';wSold.forEach(q=>{txt+=pad(`${q.lead.firstName||''} ${q.lead.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||0),10)+pad(getProd(q.lead.agentId).slice(0,15),16)+fmtDt(q.closedDate)+'\n';});}else{txt+='No policies sold this week.\n';}
   txt+=`\n${'='.repeat(60)}\nSent by AgencyPro CRM — Allen Insurance Agency, Colleyville TX\n`;
 
   // ── HTML ──
@@ -250,8 +275,8 @@ export default async function handler() {
     ? wqRows.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.name}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(q.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(q.date)}</td></tr>`).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No quotes this week</td></tr>';
 
-  const cRows = wcLeads.length
-    ? wcLeads.flatMap(l=>soldQuotesOf(l).map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${l.firstName||''} ${l.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||l.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||l.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(l.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(l.closedDate||l.date)}</td></tr>`)).join('')
+  const cRows = wSold.length
+    ? wSold.map(q=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.lead.firstName||''} ${q.lead.lastName||''}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${q.line||q.lead.line||'—'}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600;color:#22c55e">${fmtDol(q.premium||0)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${getProd(q.lead.agentId)}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${fmtDt(q.closedDate)}</td></tr>`).join('')
     : '<tr><td colspan="5" style="padding:12px;color:#94a3b8;text-align:center;font-style:italic">No policies sold this week</td></tr>';
 
   const html = `<!DOCTYPE html><html><body style="font-family:'Helvetica Neue',Arial,sans-serif;color:#1e293b;margin:0;padding:0;background:#f1f5f9">

@@ -1242,7 +1242,10 @@ async function setProducerFolioGoal(producerId, periodStart, amount){
 }
 // ─────────────────────────────────────────────────
 
-// Calculates each producer's stats directly from Closed Won leads
+// Calculates each producer's stats from sold quotes (see soldEntries below
+// — soldPolicyCount/leadSoldEntries are defined further down, near
+// QUOTE_NONSOLD_STATUSES; a quote counts the moment IT closes won, not
+// when its whole lead does)
 // period: 'folio' | 'mtd' | '30' | '90' | 'ytd' | 'all'
 function calcProducerStats(period){
   const now = new Date();
@@ -1250,9 +1253,7 @@ function calcProducerStats(period){
   const thisMonth = `${thisYear}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const folio = period==='folio' ? getCurrentFolioPeriod() : null;
 
-  function inPeriod(lead){
-    // Use closedDate (stamped when moved to Closed Won) — fall back to date if not yet set
-    const dateStr = lead.closedDate || lead.date;
+  function inPeriod(dateStr){
     if(!dateStr) return period==='all';
     const d = new Date(dateStr+'T00:00:00');
     if(period==='folio'){
@@ -1269,8 +1270,8 @@ function calcProducerStats(period){
 
   return DB.producers.map(p=>{
     // Only count NEW BUSINESS — exclude existing customers imported into CRM
-    const allWon     = DB.leads.filter(l=>l.agentId===p.id && l.status==='Closed Won' && !(l.customerType==='existing' && !l.crossSellRef));
-    const periodWon  = allWon.filter(inPeriod);
+    const allEntries    = soldEntries(DB.leads.filter(l=>l.agentId===p.id && !(l.customerType==='existing' && !l.crossSellRef)));
+    const periodEntries = allEntries.filter(e=>inPeriod(e.closedDate));
     // Close ratio: pipeline leads only — exclude cross-sells and imported existing customers
     const pipelineLeads = DB.leads.filter(l=>l.agentId===p.id && l.customerType!=='existing' && l.customerType!=='crosssell' && !l.crossSellRef);
     const pipelineWon   = pipelineLeads.filter(l=>l.status==='Closed Won');
@@ -1280,10 +1281,10 @@ function calcProducerStats(period){
     return {
       ...p,
       goal: folioGoal,
-      mtdPolicies: periodWon.reduce((s,l)=>s+soldPolicyCount(l),0),
-      mtdPremium:  periodWon.reduce((s,l)=>s+Number(l.premium||0),0),
-      allPolicies: allWon.reduce((s,l)=>s+soldPolicyCount(l),0),
-      allPremium:  allWon.reduce((s,l)=>s+Number(l.premium||0),0),
+      mtdPolicies: periodEntries.length,
+      mtdPremium:  periodEntries.reduce((s,e)=>s+Number(e.premium||0),0),
+      allPolicies: allEntries.length,
+      allPremium:  allEntries.reduce((s,e)=>s+Number(e.premium||0),0),
       closeRate
     };
   });
@@ -1297,15 +1298,50 @@ function leadPolicyCount(lead){
 }
 // Per-quote outcome helpers — see the "PER-QUOTE OUTCOMES" comment near saveLead.
 // A quote "counts as sold" unless it's explicitly closed-lost, on-hold, or the
-// legacy 'not-sold'. Unset/'closed-won'/legacy 'sold' all count.
+// legacy 'not-sold'. Unset/'closed-won'/legacy 'sold' all count. Only used
+// below as the one-time migration fallback for leads closed before
+// soldQuotes existed — new saves never leave a decided quote sitting in
+// `quotes` for this to see (saveLead extracts it immediately).
 const QUOTE_NONSOLD_STATUSES = ['closed-lost','on-hold','not-sold'];
 const quoteIsSold = q => !QUOTE_NONSOLD_STATUSES.includes(q && q.status);
 const quoteIsLost = q => !!q && (q.status==='closed-lost' || q.status==='not-sold');
-// Like leadPolicyCount, but only counts quote lines that actually sold —
-// use this (not leadPolicyCount) anywhere you're counting CLOSED/SOLD policies.
-function soldPolicyCount(lead){
-  if(lead.quotes && lead.quotes.length > 0) return lead.quotes.filter(quoteIsSold).length;
-  return 1;
+// ── SOLD-QUOTE TRACKING ───────────────────────────────────────────────
+// Scoreboard/KPI/production numbers are built from each lead's soldQuotes
+// (one entry per quote, stamped with its OWN closedDate the moment it was
+// marked Closed Won — see saveLead) rather than from the lead's overall
+// `status`. That's what lets closing one quote on a multi-quote lead count
+// right away, independent of whatever the sibling quotes are doing.
+// Legacy leads closed before this existed have no soldQuotes array — those
+// fall back to the old whole-lead accounting (quotes filtered by
+// quoteIsSold, dated by the lead's own closedDate) so historical reports
+// don't change.
+function leadSoldEntries(lead){
+  if(Array.isArray(lead.soldQuotes)) return lead.soldQuotes;
+  if(lead.status==='Closed Won'){
+    const qs = (lead.quotes&&lead.quotes.length) ? lead.quotes.filter(quoteIsSold) : [{line:lead.line,carrier:lead.carrier,premium:lead.premium||0}];
+    return qs.map(q=>({...q, closedDate:lead.closedDate||lead.date||''}));
+  }
+  return [];
+}
+// Flattened {...quote, lead} rows across a list of leads (defaults to
+// DB.leads) — use this (not filtering leads by status==='Closed Won')
+// anywhere you're counting or summing CLOSED/SOLD policies, so a partial
+// close on a multi-quote lead is reflected immediately.
+function soldEntries(leads){
+  const out = [];
+  (leads||DB.leads).forEach(l=>{ leadSoldEntries(l).forEach(q=>out.push({...q, lead:l})); });
+  return out;
+}
+// Number of quote lines actually sold on this lead so far — use this (not
+// leadPolicyCount) anywhere you're counting CLOSED/SOLD policies.
+function soldPolicyCount(lead){ return leadSoldEntries(lead).length; }
+// Every quote ever recorded on a lead — open/on-hold plus the ones already
+// moved off to soldQuotes/lostQuotes once decided — for displays that want
+// the full quote history regardless of outcome (e.g. "quotes entered"
+// lists, where a quote that closed the same day it was entered should
+// still show up).
+function allQuotesOf(lead){
+  return [...(lead.quotes||[]), ...(lead.soldQuotes||[]), ...(lead.lostQuotes||[])];
 }
 
 // ── UTILITIES ──
@@ -2118,10 +2154,13 @@ function renderKPIs(){
     }
   }
 
-  // Expand a lead into individual quote rows — each quote row = 1 quote
+  // Expand a lead into individual quote rows — each quote row = 1 quote.
+  // Uses allQuotesOf so a quote that already closed (won or lost) still
+  // shows up here even though it's moved off the active quotes array.
   function expandQuotes(lead){
-    if(lead.quotes && lead.quotes.length){
-      return lead.quotes.map(q => ({
+    const allQuotes = allQuotesOf(lead);
+    if(allQuotes.length){
+      return allQuotes.map(q => ({
         leadId:     lead.id,
         leadName:   `${lead.firstName||''} ${lead.lastName||''}`.trim(),
         agentId:    lead.agentId,
@@ -2305,7 +2344,8 @@ function sendDailyReport(){
     const getProdName = id => producers.find(p=>p.id===id)?.name||'Unassigned';
 
     function expandQ(lead){
-      if(lead.quotes&&lead.quotes.length) return lead.quotes.map(q=>({
+      const allQuotes = allQuotesOf(lead);
+      if(allQuotes.length) return allQuotes.map(q=>({
         leadName:`${lead.firstName||''} ${lead.lastName||''}`.trim(),
         agentId:lead.agentId, line:q.line||lead.line||'Other', premium:q.premium||0
       }));
@@ -2313,21 +2353,26 @@ function sendDailyReport(){
         agentId:lead.agentId, line:lead.line||'Other', premium:lead.premium||0}];
     }
 
+    // ── SOLD QUOTES — new-business only, each dated by its own closedDate
+    // (a quote counts the moment IT closes, not when its whole lead does) ──
+    const nbLeads = allLeads.filter(l=>!(l.customerType==='existing' && !l.crossSellRef));
+    const allSoldEntries = soldEntries(nbLeads);
+
     // ── TODAY ──
     const todayQuotedLeads  = allLeads.filter(l=>l.quotedDate===today);
     const todayQuoteRows    = todayQuotedLeads.flatMap(expandQ);
-    const todayClosedLeads  = allLeads.filter(l=>l.status==='Closed Won'&&!(l.customerType==='existing'&&!l.crossSellRef)&&(l.closedDate||'')===today);
-    const todayPolicies     = todayClosedLeads.reduce((s,l)=>s+leadPolicyCount(l),0);
-    const todayPremium      = todayClosedLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+    const todaySoldEntries  = allSoldEntries.filter(e=>e.closedDate===today);
+    const todayPolicies     = todaySoldEntries.length;
+    const todayPremium      = todaySoldEntries.reduce((s,e)=>s+Number(e.premium||0),0);
 
     // ── FOLIO ──
-    const folioClosedLeads  = allLeads.filter(l=>{
-      if(l.status!=='Closed Won'||( l.customerType==='existing'&&!l.crossSellRef)) return false;
-      const d=new Date((l.closedDate||l.date||'')+'T00:00:00');
+    const folioSoldEntries = allSoldEntries.filter(e=>{
+      if(!e.closedDate) return false;
+      const d=new Date(e.closedDate+'T00:00:00');
       return d>=folio.periodStart&&d<=folioEnd;
     });
-    const folioPolicies = folioClosedLeads.reduce((s,l)=>s+leadPolicyCount(l),0);
-    const folioPremium  = folioClosedLeads.reduce((s,l)=>s+Number(l.premium||0),0);
+    const folioPolicies = folioSoldEntries.length;
+    const folioPremium  = folioSoldEntries.reduce((s,e)=>s+Number(e.premium||0),0);
     const folioQuotedLeads  = allLeads.filter(l=>{
       if(l.quotedDate){const qd=new Date(l.quotedDate+'T00:00:00');return qd>=folio.periodStart&&qd<=folioEnd;}
       if(['Quoted','Closed Won','Quote Not Closed','Closed Lost'].includes(l.status)){const ld=new Date((l.date||'')+'T00:00:00');return ld>=folio.periodStart&&ld<=folioEnd;}
@@ -2339,9 +2384,9 @@ function sendDailyReport(){
     const prodData = {};
     const ensure = n => { if(!prodData[n]) prodData[n]={qToday:0,polToday:0,premToday:0,qFolio:0,polFolio:0,premFolio:0}; };
     todayQuoteRows.forEach(q=>{const n=getProdName(q.agentId);ensure(n);prodData[n].qToday++;});
-    todayClosedLeads.forEach(l=>{const n=getProdName(l.agentId);ensure(n);prodData[n].polToday+=leadPolicyCount(l);prodData[n].premToday+=Number(l.premium||0);});
+    todaySoldEntries.forEach(e=>{const n=getProdName(e.lead.agentId);ensure(n);prodData[n].polToday+=1;prodData[n].premToday+=Number(e.premium||0);});
     folioQuoteRows.forEach(q=>{const n=getProdName(q.agentId);ensure(n);prodData[n].qFolio++;});
-    folioClosedLeads.forEach(l=>{const n=getProdName(l.agentId);ensure(n);prodData[n].polFolio+=leadPolicyCount(l);prodData[n].premFolio+=Number(l.premium||0);});
+    folioSoldEntries.forEach(e=>{const n=getProdName(e.lead.agentId);ensure(n);prodData[n].polFolio+=1;prodData[n].premFolio+=Number(e.premium||0);});
 
     const line = (len, ch='-') => ch.repeat(len);
     const pad  = (s, w, right=false) => {
@@ -2398,14 +2443,11 @@ function sendDailyReport(){
     // Policies sold detail
     body += `POLICIES SOLD TODAY (${todayPolicies})\n`;
     body += `${line(56)}\n`;
-    if(todayClosedLeads.length){
+    if(todaySoldEntries.length){
       body += pad('Customer',20)+pad('Line',12)+pad('Premium',10)+'Producer\n';
       body += line(56)+'\n';
-      todayClosedLeads.forEach(l=>{
-        const pols=(l.quotes&&l.quotes.length)?l.quotes:[{line:l.line,premium:l.premium}];
-        pols.forEach(q=>{
-          body += pad(`${l.firstName||''} ${l.lastName||''}`.trim().slice(0,19),20)+pad((q.line||'—').slice(0,11),12)+pad(fmtDol(q.premium||l.premium||0),10)+getProdName(l.agentId)+'\n';
-        });
+      todaySoldEntries.forEach(e=>{
+        body += pad(`${e.lead.firstName||''} ${e.lead.lastName||''}`.trim().slice(0,19),20)+pad((e.line||'—').slice(0,11),12)+pad(fmtDol(e.premium||0),10)+getProdName(e.lead.agentId)+'\n';
       });
     } else {
       body += 'No policies sold today.\n';
@@ -2528,9 +2570,11 @@ document.getElementById('search-input').addEventListener('input',function(){
 // ── DASHBOARD ──
 function renderDashboard(){
   const leads=DB.leads;
-  // New business only — exclude imported existing customers
-  const won = leads.filter(l=>l.status==='Closed Won' && !(l.customerType==='existing' && !l.crossSellRef));
-  const mtdPremium=won.reduce((s,l)=>s+Number(l.premium||0),0);
+  // New business only — exclude imported existing customers. Built from
+  // sold quotes (each dated by its own closedDate) so a partial close on a
+  // multi-quote lead counts right away — see soldEntries near soldPolicyCount.
+  const won = soldEntries(leads.filter(l=>!(l.customerType==='existing' && !l.crossSellRef)));
+  const mtdPremium=won.reduce((s,e)=>s+Number(e.premium||0),0);
   const open=leads.filter(l=>!['Closed Won','Closed Lost','Quote Not Closed','Customer Left'].includes(l.status)).length;
   const lost=leads.filter(l=>l.status==='Closed Lost'||l.status==='Quote Not Closed').length;
   // All customers (including existing) for retention rate
@@ -2545,14 +2589,14 @@ function renderDashboard(){
   const months6=[];
   for(let i=5;i>=0;i--){ const d=new Date(); d.setMonth(d.getMonth()-i); months6.push({label:d.toLocaleString('default',{month:'short'}),key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}); }
 
-  // Charts — new business only, use closedDate for accuracy
-  const counts=months6.map(m=>leads.filter(l=>l.status==='Closed Won'&&!(l.customerType==='existing'&&!l.crossSellRef)&&(l.closedDate||l.date)&&(l.closedDate||l.date).startsWith(m.key)).reduce((s,l)=>s+leadPolicyCount(l),0));
+  // Charts — new business only, each quote dated by its own closedDate
+  const counts=months6.map(m=>won.filter(e=>e.closedDate&&e.closedDate.startsWith(m.key)).length);
   const maxC=Math.max(...counts,1);
   document.getElementById('sales-chart').innerHTML=counts.map((c,i)=>`<div class="bar-col"><div class="bar-fill" style="height:${Math.max(4,Math.round((c/maxC)*80))}px;background:${i===5?'var(--teal)':'#c7d2fe'}" title="${c} policies"></div></div>`).join('');
   document.getElementById('sales-labels').innerHTML=months6.map((m,i)=>`<div style="flex:1;font-size:9px;text-align:center;color:${i===5?'var(--teal)':'var(--muted)'}">${m.label}</div>`).join('');
 
-  // Premium written chart — use closedDate
-  const premiums=months6.map(m=>leads.filter(l=>l.status==='Closed Won'&&!(l.customerType==='existing'&&!l.crossSellRef)&&(l.closedDate||l.date)&&(l.closedDate||l.date).startsWith(m.key)).reduce((s,l)=>s+Number(l.premium||0),0));
+  // Premium written chart
+  const premiums=months6.map(m=>won.filter(e=>e.closedDate&&e.closedDate.startsWith(m.key)).reduce((s,e)=>s+Number(e.premium||0),0));
   const maxP=Math.max(...premiums,1);
   document.getElementById('premium-chart').innerHTML=premiums.map((p,i)=>`
     <div class="bar-col">
@@ -2946,17 +2990,18 @@ function renderScoreboard(){
     if(folioEl){
       const folio2 = getCurrentFolioPeriod();
       const folioEnd2 = new Date(folio2.periodEnd); folioEnd2.setHours(23,59,59,999);
-      // All new business closed in this folio — leads + cross-sells, no imported existing
-      const folioWon = DB.leads.filter(l => {
-        if(l.status !== 'Closed Won') return false;
-        if(l.customerType === 'existing' && !l.crossSellRef) return false;
-        const dateStr = l.closedDate || l.date;
-        if(!dateStr) return false;
-        const d = new Date(dateStr + 'T00:00:00');
-        return d >= folio2.periodStart && d <= folioEnd2;
-      }).sort((a,b) => (b.closedDate||b.date||'').localeCompare(a.closedDate||a.date||''));
+      // All new business closed in this folio — leads + cross-sells, no imported
+      // existing. Built from sold quotes (each dated by its own closedDate) so a
+      // partial close on a multi-quote lead shows up right away — see soldEntries.
+      const folioWon = soldEntries(DB.leads.filter(l=>!(l.customerType==='existing' && !l.crossSellRef)))
+        .filter(e => {
+          if(!e.closedDate) return false;
+          const d = new Date(e.closedDate + 'T00:00:00');
+          return d >= folio2.periodStart && d <= folioEnd2;
+        })
+        .sort((a,b) => (b.closedDate||'').localeCompare(a.closedDate||''));
 
-      const folioPolicyTotal = folioWon.reduce((s,l)=>s+soldPolicyCount(l),0);
+      const folioPolicyTotal = folioWon.length;
       if(folioCountEl) folioCountEl.textContent = folioPolicyTotal + ' polic' + (folioPolicyTotal===1?'y':'ies');
       if(folioLabelEl) folioLabelEl.textContent = folio2.label;
 
@@ -2965,18 +3010,18 @@ function renderScoreboard(){
       } else {
         // Group by producer
         const byProducer = {};
-        folioWon.forEach(l => {
-          const pid = l.agentId || '__none__';
+        folioWon.forEach(e => {
+          const pid = e.lead.agentId || '__none__';
           if(!byProducer[pid]) byProducer[pid] = [];
-          byProducer[pid].push(l);
+          byProducer[pid].push(e);
         });
         const producers = DB.producers;
         const getProducer = id => producers.find(p=>p.id===id);
 
         // Sort producer groups by total premium desc
         const sortedGroups = Object.entries(byProducer).sort((a,b) => {
-          const sumA = a[1].reduce((s,l)=>s+Number(l.premium||0),0);
-          const sumB = b[1].reduce((s,l)=>s+Number(l.premium||0),0);
+          const sumA = a[1].reduce((s,e)=>s+Number(e.premium||0),0);
+          const sumB = b[1].reduce((s,e)=>s+Number(e.premium||0),0);
           return sumB - sumA;
         });
 
@@ -2993,16 +3038,25 @@ function renderScoreboard(){
               </tr>
             </thead>
             <tbody>
-              ${sortedGroups.map(([pid, leads]) => {
+              ${sortedGroups.map(([pid, entries]) => {
                 const prod = getProducer(pid);
                 const prodColor = prod?.color || '#94a3b8';
                 const prodName = prod?.name || 'Unassigned';
-                const groupPremium = leads.reduce((s,l)=>s+Number(l.premium||0),0);
-                return leads.map((l,i) => {
+                const groupPremium = entries.reduce((s,e)=>s+Number(e.premium||0),0);
+                // Re-group this producer's sold quotes by lead so multiple
+                // policies on the same customer still show under one name.
+                const byLead = [];
+                const leadIdx = new Map();
+                entries.forEach(e => {
+                  const lid = e.lead.id;
+                  if(!leadIdx.has(lid)){ leadIdx.set(lid, byLead.length); byLead.push({lead:e.lead, items:[]}); }
+                  byLead[leadIdx.get(lid)].items.push(e);
+                });
+                return byLead.map((grp,i) => {
+                  const l = grp.lead;
                   const isCrossSell = !!l.crossSellRef;
                   const name = `${l.firstName||''} ${l.lastName||''}`.trim();
-                  const soldOnly = (l.quotes||[]).filter(quoteIsSold);
-                  const policies = soldOnly.length ? soldOnly : (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line||'—',carrier:l.carrier||'—',premium:l.premium||0}];
+                  const policies = grp.items;
                   const isFirst = i===0;
                   return policies.map((q,qi) => {
                     return `<tr style="border-bottom:1px solid var(--border);${isFirst&&qi===0?'border-top:2px solid var(--border)':''}">
@@ -3014,7 +3068,7 @@ function renderScoreboard(){
                       <td style="padding:8px 12px;color:var(--muted)">${q.line||'—'}</td>
                       <td style="padding:8px 12px;color:var(--muted)">${q.carrier||'—'}</td>
                       <td style="padding:8px 12px;font-weight:600;color:#1d4ed8">${fmt$(q.premium||0)}</td>
-                      <td style="padding:8px 12px;color:var(--muted)">${qi===0?fmtDate(l.closedDate||l.date):''}</td>
+                      <td style="padding:8px 12px;color:var(--muted)">${fmtDate(q.closedDate)}</td>
                       <td style="padding:8px 12px">
                         ${isFirst&&qi===0 ? `<div style="display:flex;align-items:center;gap:6px">
                           <div style="width:8px;height:8px;border-radius:50%;background:${prodColor};flex-shrink:0"></div>
@@ -3030,7 +3084,7 @@ function renderScoreboard(){
             <tfoot>
               <tr style="background:#f8fafc;font-weight:700;border-top:2px solid var(--border)">
                 <td style="padding:10px 12px" colspan="3">Folio Total</td>
-                <td style="padding:10px 12px;color:#1d4ed8">${fmt$(folioWon.reduce((s,l)=>s+Number(l.premium||0),0))}</td>
+                <td style="padding:10px 12px;color:#1d4ed8">${fmt$(folioWon.reduce((s,e)=>s+Number(e.premium||0),0))}</td>
                 <td style="padding:10px 12px;color:var(--muted)">${folioPolicyTotal} polic${folioPolicyTotal===1?'y':'ies'}</td>
                 <td style="padding:10px 12px"></td>
               </tr>
@@ -3175,15 +3229,12 @@ function primeFolioCounts(){
   const end = new Date(folio.periodEnd); end.setHours(23,59,59,999);
   const counts = { plSpecialty:0, lifeIP:0, biNB:0 };
   DB.leads.forEach(l=>{
-    if(l.status!=='Closed Won') return;
     if(l.customerType==='existing' && !l.crossSellRef) return; // new business only, matches calcProducerStats convention
-    const closedDate = l.closedDate || l.date || '';
-    if(!closedDate) return;
-    const d = new Date(closedDate+'T00:00:00');
-    if(d < folio.periodStart || d > end) return;
-    const quotes = (l.quotes && l.quotes.length) ? l.quotes : [{line:l.line, carrier:l.carrier}];
-    quotes.forEach(q=>{
-      if(!quoteIsSold(q)) return;
+    // Sold quotes only, each dated by its own closedDate — see leadSoldEntries.
+    leadSoldEntries(l).forEach(q=>{
+      if(!q.closedDate) return;
+      const d = new Date(q.closedDate+'T00:00:00');
+      if(d < folio.periodStart || d > end) return;
       const line = q.line || l.line;
       if(line==='Life'){ if(isFarmersCarrier(q.carrier)) counts.lifeIP++; }
       else if(line==='Commercial'){ if(isFarmersCarrier(q.carrier)) counts.biNB++; }
@@ -3606,10 +3657,12 @@ async function deleteTask(id){ if(!confirm('Delete?'))return; await db.collectio
 function renderReports(){
   try {
   const leads = DB.leads;
-  const won   = leads.filter(l=>l.status==='Closed Won');
-  const tp    = won.reduce((s,l)=>s+Number(l.premium||0),0);
-  const totalWonPolicies = won.reduce((s,l)=>s+leadPolicyCount(l),0);
-  const close = leads.length ? Math.round((won.length/leads.length)*100) : 0;
+  // Sold quotes, all-time — a partial close on a multi-quote lead counts here too.
+  const won   = soldEntries(leads);
+  const tp    = won.reduce((s,e)=>s+Number(e.premium||0),0);
+  const totalWonPolicies = won.length;
+  const wonLeadCount = leads.filter(l=>l.status==='Closed Won').length;
+  const close = leads.length ? Math.round((wonLeadCount/leads.length)*100) : 0;
   const avg   = totalWonPolicies ? Math.round(tp/totalWonPolicies) : 0;
 
   // Agency totals — ACTIVE customers only (excludes Customer Left)
@@ -3720,8 +3773,10 @@ function renderReports(){
     const src = l.source || 'Not Set';
     if(!sourceMap[src]) sourceMap[src] = { total:0, won:0, lost:0, premium:0 };
     sourceMap[src].total++;
-    if(l.status==='Closed Won'){ sourceMap[src].won++; sourceMap[src].premium += Number(l.premium||0); }
+    if(l.status==='Closed Won') sourceMap[src].won++;
     if(l.status==='Closed Lost') sourceMap[src].lost++;
+    // Sold quotes count toward source premium the moment they close, even on a lead that isn't fully closed yet.
+    sourceMap[src].premium += leadSoldEntries(l).reduce((s,e)=>s+Number(e.premium||0),0);
   });
   const sourceRows = Object.entries(sourceMap).sort((a,b)=>b[1].total-a[1].total);
   document.getElementById('source-closing-tbody').innerHTML = sourceRows.length ? sourceRows.map(([name,d])=>{
@@ -3765,7 +3820,18 @@ function leadForm(d, defaultLeadType){
   const ed=!!d;
   const lt = ed ? (d.leadType||'Personal Lines') : (defaultLeadType||'Personal Lines');
   const isCommercial = lt==='Commercial';
-  const quotes = ed && d.quotes && d.quotes.length ? d.quotes : [{line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}];
+  // Legacy leads saved before the quotes array (and soldQuotes/lostQuotes)
+  // existed only have top-level carrier/premium/line fields — seed a row
+  // from those (carrying the Closed Won outcome forward) instead of a
+  // blank row, so re-saving one doesn't silently wipe its sale out of
+  // soldQuotes. A lead that's already on the new tracking (has a
+  // soldQuotes/lostQuotes array, even an empty one) legitimately has no
+  // open quotes once fully resolved — leave that as a normal blank row.
+  const isUntrackedLegacy = ed && !Array.isArray(d.soldQuotes) && !Array.isArray(d.lostQuotes);
+  const quotes = ed && d.quotes && d.quotes.length ? d.quotes
+    : isUntrackedLegacy && (d.carrier || d.premium)
+      ? [{line:d.line||'Auto', carrier:d.carrier||'', premium:d.premium||'', notes:d.notes||'', currentCarrier:'', renewalDate:'', status: d.status==='Closed Won' ? 'closed-won' : ''}]
+      : [{line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}];
   const quoteRows = quotes.map((q,i)=>buildQuoteRow(q,i)).join('');
   return `<div class="modal-title">${ed?'Edit Lead':'Add New Lead'}</div>
 
@@ -3938,15 +4004,18 @@ function collectQuotes(){
 // — e.g. Auto closes won, Home closes lost. Each quote carries its own
 // `status`: '' (open) | 'closed-won' | 'closed-lost' | 'on-hold', set via
 // the "Quote Outcome" dropdown on the quote rows in the lead form.
-// Helpers (quoteIsSold / quoteIsLost / QUOTE_NONSOLD_STATUSES) live up by
-// soldPolicyCount. Only closed-won quotes (plus unset, and legacy 'sold')
-// count toward premium / policy counts / Agency Goals. A quote newly set
-// to 'closed-lost' auto-drops that line into the Remarketing sequence
-// (Month 3/6/9). The lead itself only flips to Closed Won once EVERY quote
-// line has an explicit outcome and at least one won — closing one quote on
-// a multi-quote lead leaves the lead open (and doesn't count the still-open
-// sibling quotes as sold) until the rest are decided too. Both handled in
-// saveLead().
+// The moment a quote is decided (won or lost), saveLead() splices it out of
+// the active `quotes` array and archives it on `soldQuotes`/`lostQuotes`
+// (each entry keeps its own closedDate) — still-open and on-hold quotes are
+// the only ones left in `quotes`. Scoreboard/KPI/production numbers are
+// built from `soldQuotes` (see leadSoldEntries/soldEntries near
+// soldPolicyCount) so a quote counts the moment IT closes, not when the
+// whole lead does. A quote newly set to 'closed-lost' also auto-drops that
+// line into the Remarketing sequence (Month 3/6/9). The lead's own overall
+// `status` only flips to Closed Won once EVERY remaining quote line has
+// also been decided and at least one ever won — so the pipeline card
+// doesn't disappear early while sibling quotes are still open. Both
+// handled in saveLead().
 
 async function saveLead(id){
   const fn=document.getElementById('l-fn').value.trim(),ln=document.getElementById('l-ln').value.trim();
@@ -3954,10 +4023,35 @@ async function saveLead(id){
   const isCommercial = document.getElementById('l-lt').value === 'Commercial';
   const quotes = collectQuotes();
   const primary = quotes[0]||{};
-  const totalPremium = quotes.filter(quoteIsSold).reduce((s,q)=>s+q.premium,0);
   const source = document.getElementById('l-src').value;
   const refPartnerId = source==='Referral' ? (document.getElementById('l-refpartner')?.value||'') : '';
   const refPartner = refPartnerId ? DB.referralPartners.find(p=>p.id===refPartnerId) : null;
+  const prevLead = id ? DB.leads.find(l=>l.id===id) : null;
+  const prevStatus = prevLead?.status||null;
+  const todayISO = new Date().toISOString().slice(0,10);
+
+  // A quote that's just been decided (won or lost) is pulled out of the
+  // active `quotes` list and archived on its own — soldQuotes feeds the
+  // Scoreboard/KPI numbers immediately, independent of the rest of the
+  // lead, and lostQuotes keeps the record without cluttering the active
+  // list (Remarketing already tracks the follow-up separately). Anything
+  // still open or on-hold stays right where it is.
+  // Date to backfill onto quotes that were ALREADY closed-won/lost before
+  // this feature existed (legacy leads being touched for the first time) —
+  // we don't know their real per-quote date, so approximate with the
+  // lead's own closedDate. A lead that wasn't already fully closed gets
+  // today's date instead, since any won/lost quote on it is closing right now.
+  const wasAlreadyClosedWon = prevStatus === 'Closed Won';
+  const legacyFallbackDate = prevLead?.closedDate || prevLead?.date || todayISO;
+  const newlyWonQuotes  = quotes.filter(q=>q.status==='closed-won'||q.status==='sold')
+    .map(q=>({...q, closedDate: wasAlreadyClosedWon ? legacyFallbackDate : todayISO}));
+  const newlyLostQuotes = quotes.filter(quoteIsLost)
+    .map(q=>({...q, closedDate: wasAlreadyClosedWon ? legacyFallbackDate : todayISO}));
+  const remainingQuotes = quotes.filter(q=>!(q.status==='closed-won'||q.status==='sold') && !quoteIsLost(q));
+  const soldQuotes = [...(prevLead?.soldQuotes||[]), ...newlyWonQuotes];
+  const lostQuotes = [...(prevLead?.lostQuotes||[]), ...newlyLostQuotes];
+  const totalPremium = remainingQuotes.reduce((s,q)=>s+(q.premium||0),0) + soldQuotes.reduce((s,q)=>s+(q.premium||0),0);
+
   const data={
     firstName:fn, lastName:ln,
     email:document.getElementById('l-em').value.trim(),
@@ -3973,34 +4067,30 @@ async function saveLead(id){
     premium: totalPremium,
     date:document.getElementById('l-dt').value,
     notes:document.getElementById('l-nt').value.trim(),
-    quotes: quotes,
+    quotes: remainingQuotes,
+    soldQuotes, lostQuotes,
     // Commercial-specific fields
     companyName:   isCommercial ? (document.getElementById('l-company')?.value.trim()||'') : '',
     businessType:  isCommercial ? (document.getElementById('l-biztype')?.value||'') : '',
     industry:      isCommercial ? (document.getElementById('l-industry')?.value.trim()||'') : '',
   };
-  const prevLead = id ? DB.leads.find(l=>l.id===id) : null;
-  const prevStatus = prevLead?.status||null;
   // The lead only flips to Closed Won once EVERY quote line has an explicit
   // outcome (closed-won/closed-lost/on-hold) and at least one of them won —
   // closing one quote on a multi-quote lead shouldn't close the whole deal
-  // (and count sibling quotes as sold) while others are still open/undecided.
-  const allQuotesDecided = quotes.length>0 && quotes.every(q=>q.status && q.status!=='');
-  const anyQuoteWon = quotes.some(q=>q.status==='closed-won'||q.status==='sold');
+  // while others are still open/undecided.
+  const allQuotesDecided = remainingQuotes.every(q=>q.status && q.status!=='');
+  const anyQuoteWon = soldQuotes.length>0;
   if(allQuotesDecided && anyQuoteWon && data.status!=='Closed Won'){
     data.status = 'Closed Won';
-  } else if(anyQuoteWon && !allQuotesDecided){
-    const prevAnyWon = (prevLead?.quotes||[]).some(q=>q.status==='closed-won'||q.status==='sold');
-    if(!prevAnyWon){
-      const openLines = quotes.filter(q=>!q.status).map(q=>q.line).join(', ');
-      toast(`Quote marked Closed Won — lead stays open until ${openLines||'the remaining quote'} is decided too.`);
-    }
+  } else if(newlyWonQuotes.length>0 && !allQuotesDecided){
+    const openLines = remainingQuotes.filter(q=>!q.status).map(q=>q.line).join(', ');
+    toast(`Quote marked Closed Won — now counts toward your Scoreboard. Lead stays open until ${openLines||'the remaining quote'} is decided too.`);
   }
   const isNowClosed = data.status==='Closed Won' && prevStatus!=='Closed Won';
   const isNowQuoted = data.status==='Quoted' && prevStatus!=='Quoted';
   const isLeavingQuoted = prevStatus==='Quoted' && ['Closed Won','Closed Lost','Quote Not Closed'].includes(data.status);
-  if(isNowClosed) data.closedDate = new Date().toISOString().slice(0,10);
-  if(isNowQuoted) data.quotedDate = new Date().toISOString().slice(0,10);
+  if(isNowClosed) data.closedDate = todayISO;
+  if(isNowQuoted) data.quotedDate = todayISO;
   // If moving away from Closed Won, clear closedDate
   if(id && prevStatus==='Closed Won' && data.status!=='Closed Won') data.closedDate = '';
 
