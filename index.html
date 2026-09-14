@@ -3942,8 +3942,11 @@ function collectQuotes(){
 // soldPolicyCount. Only closed-won quotes (plus unset, and legacy 'sold')
 // count toward premium / policy counts / Agency Goals. A quote newly set
 // to 'closed-lost' auto-drops that line into the Remarketing sequence
-// (Month 3/6/9); marking any quote closed-won flips the lead to Closed
-// Won if it isn't already. Both handled in saveLead().
+// (Month 3/6/9). The lead itself only flips to Closed Won once EVERY quote
+// line has an explicit outcome and at least one won — closing one quote on
+// a multi-quote lead leaves the lead open (and doesn't count the still-open
+// sibling quotes as sold) until the rest are decided too. Both handled in
+// saveLead().
 
 async function saveLead(id){
   const fn=document.getElementById('l-fn').value.trim(),ln=document.getElementById('l-ln').value.trim();
@@ -3976,12 +3979,23 @@ async function saveLead(id){
     businessType:  isCommercial ? (document.getElementById('l-biztype')?.value||'') : '',
     industry:      isCommercial ? (document.getElementById('l-industry')?.value.trim()||'') : '',
   };
-  // Any quote marked Closed Won means the lead itself is Closed Won
-  if(quotes.some(q=>q.status==='closed-won') && data.status!=='Closed Won'){
-    data.status = 'Closed Won';
-  }
   const prevLead = id ? DB.leads.find(l=>l.id===id) : null;
   const prevStatus = prevLead?.status||null;
+  // The lead only flips to Closed Won once EVERY quote line has an explicit
+  // outcome (closed-won/closed-lost/on-hold) and at least one of them won —
+  // closing one quote on a multi-quote lead shouldn't close the whole deal
+  // (and count sibling quotes as sold) while others are still open/undecided.
+  const allQuotesDecided = quotes.length>0 && quotes.every(q=>q.status && q.status!=='');
+  const anyQuoteWon = quotes.some(q=>q.status==='closed-won'||q.status==='sold');
+  if(allQuotesDecided && anyQuoteWon && data.status!=='Closed Won'){
+    data.status = 'Closed Won';
+  } else if(anyQuoteWon && !allQuotesDecided){
+    const prevAnyWon = (prevLead?.quotes||[]).some(q=>q.status==='closed-won'||q.status==='sold');
+    if(!prevAnyWon){
+      const openLines = quotes.filter(q=>!q.status).map(q=>q.line).join(', ');
+      toast(`Quote marked Closed Won — lead stays open until ${openLines||'the remaining quote'} is decided too.`);
+    }
+  }
   const isNowClosed = data.status==='Closed Won' && prevStatus!=='Closed Won';
   const isNowQuoted = data.status==='Quoted' && prevStatus!=='Quoted';
   const isLeavingQuoted = prevStatus==='Quoted' && ['Closed Won','Closed Lost','Quote Not Closed'].includes(data.status);
