@@ -138,6 +138,13 @@ const expandQ   = l => {
   return [{name,agentId:l.agentId,line:l.line||'Other',premium:l.premium||0}];
 };
 
+// Cross-sell opportunities live in their own collection, not leads, and only
+// get promoted into leads once Closed Won — so a cross-sell sitting at
+// "Quoted" is otherwise invisible to the Quotes counts. index.html's
+// saveCrossSell() stamps quotedDate the same way saveLead() does; mirror
+// that here so the two stay in sync.
+const expandCSQ = cs => ({ name: cs.customerName||'', agentId: cs.agentId, line: cs.line||'Other', premium: cs.premium||0 });
+
 // ── MAIN ──────────────────────────────────────────────────────────────
 export default async function handler() {
   console.log('[daily-kpi-report] Starting...');
@@ -151,11 +158,13 @@ export default async function handler() {
   if (!projectId || !apiKey)  throw new Error('Missing Firebase env vars');
   if (!resendKey)             throw new Error('Missing RESEND_API_KEY');
 
-  const [leads, producers, settings] = await Promise.all([
+  const [leads, producers, crosssells, settings] = await Promise.all([
     firestoreGet(projectId, apiKey, 'leads'),
     firestoreGet(projectId, apiKey, 'producers'),
+    firestoreGet(projectId, apiKey, 'crosssells'),
     firestoreGetDoc(projectId, apiKey, 'settings/agency'),
   ]);
+  const csQuoted = crosssells.filter(cs => cs.quotedDate);
 
   const getProd = id => producers.find(p=>p.id===id)?.name || 'Unassigned';
   const today   = getTodayCST();
@@ -168,7 +177,8 @@ export default async function handler() {
 
   // ── TODAY ──
   const tqLeads = leads.filter(l => l.quotedDate === today);
-  const tqRows  = tqLeads.flatMap(expandQ);
+  const tqRows  = tqLeads.flatMap(expandQ)
+    .concat(csQuoted.filter(cs => cs.quotedDate === today).map(expandCSQ));
   const tSold   = allSold.filter(q => q.closedDate === today);
   const tPol    = tSold.length;
   const tPrem   = tSold.reduce((s,q)=>s+Number(q.premium||0),0);
@@ -176,13 +186,22 @@ export default async function handler() {
 
   // ── FOLIO ──
   const fqLeads = leads.filter(l => {
+    // Cross-sell "production record" leads (customerType:'crosssell') never
+    // went through the leads Quoted stage — their real quote event lives on
+    // the crosssells doc itself (see csQuoted below). Counting them here too
+    // would double-count.
+    if (l.customerType==='crosssell') return false;
     if (l.quotedDate) { const qd=new Date(l.quotedDate+'T00:00:00'); return qd>=folio.periodStart&&qd<=folio.periodEnd; }
     if (['Quoted','Closed Won','Quote Not Closed','Closed Lost'].includes(l.status)) {
       const ld=new Date((l.date||'')+'T00:00:00'); return ld>=folio.periodStart&&ld<=folio.periodEnd;
     }
     return false;
   });
-  const fqRows  = fqLeads.flatMap(expandQ);
+  const fqRows  = fqLeads.flatMap(expandQ)
+    .concat(csQuoted.filter(cs => {
+      const qd = new Date(cs.quotedDate+'T00:00:00');
+      return qd>=folio.periodStart&&qd<=folio.periodEnd;
+    }).map(expandCSQ));
   const fSold   = allSold.filter(q => {
     if (!q.closedDate) return false;
     const d = new Date(q.closedDate+'T00:00:00');

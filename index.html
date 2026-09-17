@@ -1092,6 +1092,7 @@ function startListeners(){
     if(currentView==='crosssell') renderCrossSell();
     if(currentView==='pipeline') renderPipeline();
     if(currentView==='remarketing') renderRemarketing();
+    if(currentView==='kpis') renderKPIs();
     updateCrossSellBadge();
     updateRemarketBadge();
     updatePipelineBadge();
@@ -2187,6 +2188,11 @@ function renderKPIs(){
     return lead.quotedDate === dateStr;
   }
   function wasQuotedInFolio(lead){
+    // Cross-sell "production record" leads (customerType:'crosssell', created by
+    // saveCrossSell() when an opportunity closes) never went through the leads
+    // Quoted stage — their real quote event lives on the crosssells doc itself
+    // (see expandCrossSellQuote below). Counting them here too would double-count.
+    if(lead.customerType==='crosssell') return false;
     if(lead.quotedDate){
       const qd = new Date(lead.quotedDate + 'T00:00:00');
       return qd >= folio.periodStart && qd <= folioEnd;
@@ -2198,9 +2204,30 @@ function renderKPIs(){
     return false;
   }
 
+  // Cross-sell opportunities live in their own collection (DB.crosssells), not
+  // in leads, and only get promoted into leads once Closed Won — so a
+  // cross-sell sitting at "Quoted" is otherwise invisible to the Quotes KPI.
+  // saveCrossSell() stamps quotedDate the same way saveLead() does; shape this
+  // like a quote row (expandQuotes' output) so it flows through the same
+  // per-producer breakdown / name list rendering below.
+  function expandCrossSellQuote(cs){
+    return {
+      leadId:     cs.id,
+      leadName:   cs.customerName || '',
+      agentId:    cs.agentId,
+      line:       cs.line || 'Other',
+      carrier:    cs.carrier || '',
+      premium:    cs.premium || 0,
+      quotedDate: cs.quotedDate,
+      date:       cs.quotedDate,
+    };
+  }
+  const crossSellQuotes = (DB.crosssells||[]).filter(cs => cs.quotedDate);
+
   // ── TODAY ──
   const todayLeads = allLeads.filter(l => wasQuotedOn(l, today));
-  const todayRows  = todayLeads.flatMap(expandQuotes);
+  const todayRows  = todayLeads.flatMap(expandQuotes)
+    .concat(crossSellQuotes.filter(cs => cs.quotedDate === today).map(expandCrossSellQuote));
   const todayByProd = {};
   producers.forEach(p => { todayByProd[p.id] = []; });
   todayByProd['__unassigned'] = [];
@@ -2222,7 +2249,11 @@ function renderKPIs(){
 
   // ── FOLIO ──
   const folioLeads = allLeads.filter(wasQuotedInFolio);
-  const folioRows  = folioLeads.flatMap(expandQuotes);
+  const folioRows  = folioLeads.flatMap(expandQuotes)
+    .concat(crossSellQuotes.filter(cs => {
+      const qd = new Date(cs.quotedDate + 'T00:00:00');
+      return qd >= folio.periodStart && qd <= folioEnd;
+    }).map(expandCrossSellQuote));
   const folioByProd = {};
   producers.forEach(p => { folioByProd[p.id] = []; });
   folioByProd['__unassigned'] = [];
@@ -5157,8 +5188,18 @@ async function saveCrossSell(id){
   };
 
   // Check if previous status was already Closed Won (avoid double-adding policy)
-  const prevStatus = id ? DB.crosssells.find(c=>c.id===id)?.status : null;
+  const prevCS = id ? DB.crosssells.find(c=>c.id===id) : null;
+  const prevStatus = prevCS?.status || null;
   const isNewlyClosed = data.status==='Closed Won' && prevStatus!=='Closed Won';
+  // Stamp a quotedDate the same way saveLead() does, so cross-sell quotes show
+  // up in the Quotes KPI (Today/Folio) instead of only appearing once closed.
+  // Also backfills existing "Quoted" records saved before this field existed
+  // (e.g. re-saving an old cross-sell with no quotedDate yet) — but only when
+  // it's genuinely missing, so a normal edit of an already-dated quote doesn't
+  // creep its date forward.
+  if(data.status==='Quoted' && (prevStatus!=='Quoted' || !prevCS?.quotedDate)){
+    data.quotedDate = new Date().toISOString().slice(0,10);
+  }
 
   if(id){
     await db.collection('crosssells').doc(id).update(data);
