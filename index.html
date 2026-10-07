@@ -2568,8 +2568,25 @@ function showView(v){
 }
 
 // ── SEARCH ──
+// Pipeline is kanban cards, not table rows, so it filters .deal-card elements
+// across all three boards (Personal Lines / Life / Commercial) and keeps each
+// column's count in step. Also called at the end of renderPipeline() so a live
+// Firestore update doesn't wipe out an active search.
+function applyPipelineSearch(){
+  const si = document.getElementById('search-input');
+  const q = (si && currentView==='pipeline' ? si.value : '').toLowerCase().trim();
+  document.querySelectorAll('#view-pipeline .deal-card').forEach(c=>{
+    c.style.display = !q || c.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('#view-pipeline .p-col').forEach(col=>{
+    const cards = [...col.querySelectorAll('.deal-card')];
+    const countEl = col.querySelector('.p-col-head span:last-child');
+    if(countEl) countEl.textContent = q ? cards.filter(c=>c.style.display!=='none').length : cards.length;
+  });
+}
 document.getElementById('search-input').addEventListener('input',function(){
   const q = this.value.toLowerCase().trim();
+  if(currentView==='pipeline'){ applyPipelineSearch(); return; }
   if(!q){
     // Clear search — re-render current view
     const renders={leads:renderLeads,customers:renderCustomers,renewals:renderRenewals,remarketing:renderRemarketing,tasks:renderTasks};
@@ -2839,6 +2856,7 @@ function renderPipeline(){
 
   // Restore active tab display
   switchPipelineTab(activePipelineTab);
+  applyPipelineSearch();
 }
 
 // Open lead modal pre-set to a specific leadType
