@@ -27,3 +27,8 @@
 
 [functions."send-new-customers-email"]
   schedule = "0 23 * * *"
+
+# 9:00 AM Central = 14:00 UTC (daylight) or 15:00 UTC (standard). Fires at both;
+# the handler only proceeds when it's actually 9am Central, so one email/day.
+[functions."send-producer-folio-update"]
+  schedule = "0 14,15 * * *"
