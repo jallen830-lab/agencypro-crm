@@ -19,6 +19,8 @@
  *   RESEND_API_KEY        → from resend.com (starts with re_)
  *   REPORT_FROM_EMAIL     → reports@alleninsurancetx.com  (verified domain in Resend)
  * Optional:
+ *   FOLIO_UPDATE_CC       → who's cc'd on every producer's email
+ *                           (default jason@alleninsurancetx.com; not cc'd on his own)
  *   SKIP_HOUR_CHECK=1     → send regardless of the current hour (for a manual
  *                           "Run now" test from the Netlify dashboard)
  */
@@ -224,6 +226,8 @@ export default async function handler() {
   const apiKey    = process.env.FIREBASE_WEB_API_KEY;
   const resendKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.REPORT_FROM_EMAIL || 'reports@alleninsurancetx.com';
+  // Jason is cc'd on every producer's update (skipped on his own, so he doesn't get two copies)
+  const ccEmail   = process.env.FOLIO_UPDATE_CC   || 'jason@alleninsurancetx.com';
 
   if (!projectId || !apiKey) throw new Error('Missing Firebase env vars');
   if (!resendKey)            throw new Error('Missing RESEND_API_KEY');
@@ -277,7 +281,12 @@ export default async function handler() {
       const sendRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${resendKey}` },
-        body: JSON.stringify({ from: `AgencyPro CRM <${fromEmail}>`, to: [producer.email], subject, text, html }),
+        body: JSON.stringify({
+          from: `AgencyPro CRM <${fromEmail}>`,
+          to: [producer.email],
+          ...(ccEmail && producer.email.toLowerCase() !== ccEmail.toLowerCase() ? { cc: [ccEmail] } : {}),
+          subject, text, html,
+        }),
       });
       const sendData = await sendRes.json();
       if (!sendRes.ok) throw new Error(JSON.stringify(sendData));
