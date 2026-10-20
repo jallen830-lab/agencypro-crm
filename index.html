@@ -2800,6 +2800,7 @@ function renderPipeline(){
               <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(l.premium)}</span>
               <div style="display:flex;align-items:center;gap:4px">
                 <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
+                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>
                 <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();deleteLead('${l.id}')" title="Delete this lead">🗑</button>
               </div>
             </div>
@@ -2817,6 +2818,7 @@ function renderPipeline(){
       sub:`${l.line} — ${l.source}`, premium:l.premium, status:l.status, agentId:l.agentId,
       tag: TYPE_TAG[l.leadType]||null,
       onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
+      task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`,
       del:`deleteLead('${l.id}')`
     })),
     ...csOpps.map(c=>({
@@ -2824,6 +2826,7 @@ function renderPipeline(){
       sub:c.line+(c.carrier?' — '+c.carrier:''), premium:c.premium, status:c.status, agentId:c.agentId,
       tag: TYPE_TAG['Cross Sale'],
       onClick:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`,
+      task:`openModal('crossSellTask',DB.crosssells.find(x=>x.id==='${c.id}'))`,
       del:`deleteCrossSell('${c.id}')`
     }))
   ];
@@ -2847,6 +2850,7 @@ function renderPipeline(){
               <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(i.premium)}</span>
               <div style="display:flex;align-items:center;gap:4px">
                 <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(i.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(i.agentId)}</div>
+                ${i.task?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.task}" title="Add a task for this lead">+ Task</button>`:''}
                 <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.del}" title="Delete">🗑</button>
               </div>
             </div>
@@ -3860,7 +3864,7 @@ async function logActivity(icon,bg,text){
 }
 
 // ── MODALS ──
-function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
+function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,crossSellTask:crossSellTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
 function closeModal(){ document.getElementById('overlay').style.display='none'; }
 function closeOverlay(e){ if(e.target===document.getElementById('overlay'))closeModal(); }
 function agentOpts(sel){ return '<option value="">Unassigned</option>'+DB.producers.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${p.name}</option>`).join(''); }
@@ -4223,9 +4227,10 @@ async function saveTask(id){
 }
 
 // ── AD-HOC TASK ON A LEAD ─────────────────────────────────────────────
-function leadTaskForm(lead){
+function crossSellTaskForm(cs){ return leadTaskForm(cs, true); }
+function leadTaskForm(lead, isCrossSell){
   const today = new Date().toISOString().slice(0,10);
-  const leadName = `${lead.firstName||''} ${lead.lastName||''}`.trim();
+  const leadName = isCrossSell ? (lead.customerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
   return `<div class="modal-title">+ Task — ${leadName}</div>
     <div class="form-group"><label class="form-label">Task Description *</label><input class="form-input" id="lt-tx" placeholder="Describe the task..."></div>
     <div class="form-row">
@@ -4233,19 +4238,19 @@ function leadTaskForm(lead){
       <div class="form-group"><label class="form-label">Priority</label><select class="form-input" id="lt-pr">${['high','medium','low'].map(x=>`<option${x==='medium'?' selected':''}>${x}</option>`).join('')}</select></div>
     </div>
     <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="lt-ag">${agentOpts(lead.agentId||'')}</select></div>
-    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveLeadTask('${lead.id}')">Add Task</button></div>`;
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveLeadTask('${lead.id}'${isCrossSell?',true':''})">Add Task</button></div>`;
 }
-async function saveLeadTask(leadId){
+async function saveLeadTask(leadId, isCrossSell){
   const text = document.getElementById('lt-tx').value.trim();
   if(!text){ alert('Description required'); return; }
   const due = document.getElementById('lt-du').value;
   const priority = document.getElementById('lt-pr').value;
   const agentId = document.getElementById('lt-ag').value;
-  const lead = DB.leads.find(l=>l.id===leadId);
-  const leadName = lead ? `${lead.firstName||''} ${lead.lastName||''}`.trim() : '';
+  const lead = isCrossSell ? DB.crosssells.find(c=>c.id===leadId) : DB.leads.find(l=>l.id===leadId);
+  const leadName = !lead ? '' : isCrossSell ? (lead.customerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
   const ref = await db.collection('tasks').add({
     text, due, priority, agentId, done:false,
-    leadId, leadName,
+    ...(isCrossSell ? {crossSellId:leadId} : {leadId}), leadName,
     type: 'lead-task',
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   });
