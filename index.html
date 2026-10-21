@@ -6339,6 +6339,10 @@ const ANNIV_COLS = {
   segment: ['segmenttag','segment','segmentag','tag'],
   batch:   ['batchtag','batch'],
   tad:     ['tadaccount','tadaccountnumber','tadacct','tad','accountnumber','tadaccountno','account'],
+  contactFirst:['contactfirstname'],
+  contactLast:['contactlastname'],
+  nameCheck:['namecheck'],
+  neighborhood:['neighborhood'],
 };
 function annivMapHeaders(header){
   const norm=header.map(h=>String(h||'').toLowerCase().replace(/[^a-z0-9]/g,''));
@@ -6384,7 +6388,7 @@ function annivMailBlock(l){
   return {addr:l.propertyAddress||'',city:'',state:'',zip:''};
 }
 function annivLeadById(id){ return (DB.anniversaryLeads||[]).find(x=>x.id===id); }
-function annivDisplayFirst(l){ return l.firstName||(l.ownerName||'').split(' ')[0]||'there'; }
+function annivDisplayFirst(l){ return l.firstName||'there'; }  // blank (business/trust names, unconfirmed contacts) → "Hi there"
 
 // ── SCRIPTS (call / email copy per segment, Weaver 3W style) ──────────
 // Placeholders: [Name] [Agent] [Address] [Years] [Value] [Month] [Number]
@@ -6756,7 +6760,7 @@ function annivBuildPlan(){
 
   const seenTad=new Map(), seenAddr=new Map();
   const accepted=[], skipped=[], rejected=[];
-  const warn={outOfWindow:0,noPhone:0,noEmail:0,multiBatch:0};
+  const warn={outOfWindow:0,noPhone:0,noEmail:0,multiBatch:0,nameCheck:0};
   const csvBatches=new Set();
   for(let ri=1;ri<table.length;ri++){
     const r=table[ri], rowNo=ri+1;
@@ -6770,6 +6774,12 @@ function annivBuildPlan(){
     const segment=annivSegment(cell(r,'segment'));
     if(!segment)   { reject(`Unknown segment tag "${cell(r,'segment')}" (use Coverage Review, Umbrella or Landlord)`); continue; }
     const owner=annivParseOwner(raw.owner,o.fmt);
+    // Optional contact columns: greet the contact by first name when the list vendor's Name Check says Match (or is absent);
+    // if the vendor flagged the name, greet generically and surface the flag until someone confirms the owner.
+    const cFirst=cell(r,'contactFirst'), cLast=cell(r,'contactLast'), nCheck=cell(r,'nameCheck');
+    const nOk=!nCheck||/^match$/i.test(nCheck);
+    if(cFirst&&nOk){ owner.firstName=annivTitle(cFirst); if(cLast) owner.lastName=annivTitle(cLast); }
+    else if(!nOk){ owner.firstName=''; }
     const phone10=annivPhone10(cell(r,'phone'));
     const emailRaw=cell(r,'email').toLowerCase();
     const email=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)?emailRaw:'';
@@ -6802,7 +6812,7 @@ function annivBuildPlan(){
       propertyAddress:raw.prop,mailAddress:cell(r,'mailAddr'),mailCity:cell(r,'mailCity'),mailState:cell(r,'mailState').toUpperCase(),
       mailZip:cell(r,'mailZip').replace(/\D/g,'').slice(0,5),
       phone:annivPhoneFmt(phone10),email,saleDate,marketValue:annivNum(cell(r,'value')),segment,
-      tadAccount:raw.tad,_rowNo:rowNo,
+      tadAccount:raw.tad,nameCheck:nOk?'':nCheck,neighborhood:cell(r,'neighborhood'),_rowNo:rowNo,
     });
   }
   if(csvBatches.size>1) warn.multiBatch=csvBatches.size;
@@ -6831,7 +6841,7 @@ function annivBuildPlan(){
     a.agentId=o.split==='all'?(o.producers[i%o.producers.length]||''):o.split;
     // index within this wave AND producer, so each producer's calls spread across every day of the window
     const ck=a.wave+'|'+a.agentId; a.idx=(idxCount[ck]=(idxCount[ck]||0)+1)-1;
-    if(!a.phone) warn.noPhone++; if(!a.email) warn.noEmail++;
+    if(!a.phone) warn.noPhone++; if(!a.email) warn.noEmail++; if(a.nameCheck) warn.nameCheck++;
     a.batch=o.batch; a.stage='Mailed'; a.cycle=1; a.reached={}; a.history=[]; a.notes='';
     a.cadenceEnd=annivBizDay(annivAddDays(a.mailDate,21));
     delete a._rowNo; delete a.outOfWindow;
@@ -6860,6 +6870,7 @@ function annivImportPreview(){
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
       ${plan.warn.outOfWindow?`⚠️ ${plan.warn.outOfWindow} row(s) have an anniversary outside the 20–100 day window${plan.opts.skipWindow?' (skipped)':' (still imported)'}. `:''}
       ${plan.warn.noPhone?`${plan.warn.noPhone} with no valid phone (no call tasks — mail only). `:''}
+      ${plan.warn.nameCheck?`${plan.warn.nameCheck} flagged by the list's Name Check — greeted as "there" until the owner is confirmed. `:''}
       ${plan.warn.noEmail?`${plan.warn.noEmail} with no email (no email task). `:''}
       ${plan.warn.waveNote?`ℹ️ ${annivEsc(plan.warn.waveNote)} `:''}
       ${plan.warn.multiBatch?`⚠️ File contains ${plan.warn.multiBatch} different batch tags — your Batch tag above is used for all rows.`:''}
@@ -6936,7 +6947,7 @@ function annivCardHtml(l,today){
   const unmailed=l.stage==='Mailed'&&l.mailDate>today;
   const addr=l.segment==='Landlord'&&l.mailAddress?`✉️ ${annivEsc(l.mailAddress)}${l.mailCity?', '+annivEsc(l.mailCity):''}`:`📍 ${annivEsc(l.propertyAddress)}`;
   return `<div class="deal-card" style="border-left-color:${ANNIV_STAGE_COLORS[l.stage]}" onclick="annivOpenLead('${l.id}')">
-    <div style="font-size:13px;font-weight:600;margin-bottom:3px">${annivEsc(l.ownerName)}</div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:3px">${annivEsc(l.ownerName)}${l.nameCheck?` <span title="${annivEsc(l.nameCheck)} — confirm the owner before calling" style="color:#b45309">⚠</span>`:''}</div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
       <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${seg.bg};color:${seg.fg}">${seg.icon} ${annivEsc(l.segment)}</span>
       <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:#f1f5f9;color:#475569">${annivEsc(l.batch)}${l.wave?' · W'+l.wave:''}</span>
@@ -7011,6 +7022,8 @@ function annivOpenLead(id){
       ${annivInfoRow('Anniversary',l.anniversaryDate?`${fmtDate(l.anniversaryDate)}${du!=null?` (${du<0?Math.abs(du)+' days ago':du+' days'})`:''}`:'')}
       ${annivInfoRow('Home value',l.marketValue?fmt$(l.marketValue):'')}
       ${annivInfoRow('TAD account #',annivEsc(l.tadAccount))}
+      ${annivInfoRow('Neighborhood',annivEsc(l.neighborhood))}
+      ${l.nameCheck?annivInfoRow('⚠ Name check',`<span style="color:#b45309">${annivEsc(l.nameCheck)} — confirm the owner before the first call</span>`):''}
       ${annivInfoRow('Batch',`${annivEsc(l.batch)}${l.wave?' · Wave '+l.wave:''} · mailed ${fmtDate(l.mailDate)}${(l.cycle||1)>1?' · cycle '+l.cycle:''}`)}
       ${l.stage==='Not Now'?annivInfoRow('Not Now',`${annivEsc(l.notNowReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
       ${l.stage==='Quote Not Closed'?annivInfoRow('Quote Not Closed',`${annivEsc(l.qncReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
