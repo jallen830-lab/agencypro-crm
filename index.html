@@ -2925,6 +2925,7 @@ function openModalWithType(type, leadType){
   // Pass leadType directly into the modal so there's no race condition
   document.getElementById('overlay').style.display='flex';
   document.getElementById('modal-content').innerHTML = leadForm(null, leadType);
+  const lm=document.querySelector('#overlay .modal'); if(lm) lm.style.width='680px';
   // Set quote row line for commercial
   if(leadType==='Commercial'){
     const firstLine = document.querySelector('.qr-line');
@@ -3930,7 +3931,7 @@ async function logActivity(icon,bg,text){
 }
 
 // ── MODALS ──
-function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,crossSellTask:crossSellTaskForm,annivTask:annivTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
+function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,crossSellTask:crossSellTaskForm,annivTask:annivTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); const m=document.querySelector('#overlay .modal'); if(m) m.style.width=(type==='lead')?'680px':''; }
 function closeModal(){ document.getElementById('overlay').style.display='none'; const m=document.querySelector('#overlay .modal'); if(m) m.style.width=''; }
 function closeOverlay(e){ if(e.target===document.getElementById('overlay'))closeModal(); }
 function agentOpts(sel){ return '<option value="">Unassigned</option>'+DB.producers.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${p.name}</option>`).join(''); }
@@ -3952,8 +3953,39 @@ function leadForm(d, defaultLeadType){
       ? [{line:d.line||'Auto', carrier:d.carrier||'', premium:d.premium||'', notes:d.notes||'', currentCarrier:'', renewalDate:'', status: d.status==='Closed Won' ? 'closed-won' : ''}]
       : [{line:'Auto',carrier:'',premium:'',notes:'',currentCarrier:'',renewalDate:''}];
   const quoteRows = quotes.map((q,i)=>buildQuoteRow(q,i)).join('');
-  return `<div class="modal-title">${ed?'Edit Lead':'Add New Lead'}</div>
-
+  // ── Anniversary-style layout: header + pills, summary box, stage buttons, grouped fields ──
+  // Every input keeps its original id/class (l-fn, l-st, qr-*, …) so saveLead() is untouched.
+  const curStatus = ed ? (d.status||'New') : 'New';
+  const lineSet = [...new Set([...(d&&d.quotes||[]),...(d&&d.soldQuotes||[])].map(q=>q.line).filter(Boolean))];
+  if(ed && !lineSet.length && d.line) lineSet.push(d.line);
+  const LP = {Auto:['#dbeafe','#1d4ed8'],Home:['#ccfbf1','#0f766e'],Life:['#fef3c7','#b45309'],Commercial:['#ede9fe','#6d28d9'],Umbrella:['#e0e7ff','#4338ca'],Specialty:['#fce7f3','#be185d'],'Wind/Hail Buydown':['#cffafe','#0e7490']};
+  const lp = (t,bg,fg) => `<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:8px;background:${bg};color:${fg}">${annivEsc(t)}</span>`;
+  const ago = iso => { if(!iso) return ''; const n=-daysUntil(iso); return `${fmtDate(iso)} (${n<=0?'today':n+' days ago'})`; };
+  const allQ = ed ? [...(d.quotes||[]),...(d.soldQuotes||[])] : [];
+  const quotedTotal = allQ.reduce((s,q)=>s+(Number(q.premium)||0),0);
+  const info = (label,val) => val ? `<div style="font-size:12px;margin-bottom:3px"><span style="color:var(--muted);display:inline-block;width:118px">${label}</span>${val}</div>` : '';
+  const header = ed
+    ? `<div class="modal-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${annivEsc(((d.firstName||'')+' '+(d.lastName||'')).trim()||'Lead')}
+        ${lineSet.slice(0,3).map(x=>lp(x,...(LP[x]||['#f1f5f9','#475569']))).join('')}
+        ${d.source?lp(d.source,'#f1f5f9','#475569'):''}${d.companyName?lp('🏢 '+d.companyName,'#dbeafe','#1d4ed8'):''}</div>
+      <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+        ${info('Added',ago(d.date))}
+        ${info('Quoted',ago(d.quotedDate))}
+        ${info('Closed',ago(d.closedDate))}
+        ${info('Quoted premium',quotedTotal?fmt$(quotedTotal):'')}
+        ${info('Referral partner',d.referralPartnerName?annivEsc(d.referralPartnerName):'')}
+      </div>`
+    : `<div class="modal-title">Add New Lead</div>`;
+  const stageBtns = `<div class="form-group"><label class="form-label">Status</label>
+      <div id="l-st-btns" style="display:flex;gap:6px;flex-wrap:wrap">${STAGES.map(x=>`<button type="button" class="btn ${x===curStatus?'btn-primary':'btn-ghost'} btn-sm" data-stage="${x}" onclick="setLeadStatusBtn('${x}')">${x}</button>`).join('')}</div>
+      <select class="form-input" id="l-st" style="display:none">${STAGES.map(x=>`<option${x===curStatus?' selected':''}>${x}</option>`).join('')}</select>
+    </div>`;
+  return `${header}
+    ${stageBtns}
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Assigned Producer</label><select class="form-input" id="l-ag">${agentOpts(ed?d.agentId:'')}</select></div>
+      <div class="form-group"><label class="form-label">Date</label><input class="form-input" id="l-dt" type="date" value="${ed?d.date:new Date().toISOString().slice(0,10)}"></div>
+    </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">First Name *</label><input class="form-input" id="l-fn" value="${ed?d.firstName:''}" placeholder="First name"></div>
       <div class="form-group"><label class="form-label">Last Name *</label><input class="form-input" id="l-ln" value="${ed?d.lastName:''}" placeholder="Last name"></div>
@@ -4004,14 +4036,6 @@ function leadForm(d, defaultLeadType){
       </div>
     </div>
 
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Assigned Producer</label><select class="form-input" id="l-ag">${agentOpts(ed?d.agentId:'')}</select></div>
-      <div class="form-group"><label class="form-label">Status</label>
-        <select class="form-input" id="l-st">${STAGES.map(x=>`<option${(ed?d.status===x:x==='New')?` selected`:``}>${x}</option>`).join('')}</select>
-      </div>
-    </div>
-    <div class="form-group"><label class="form-label">Date</label><input class="form-input" id="l-dt" type="date" value="${ed?d.date:new Date().toISOString().slice(0,10)}" style="max-width:200px"></div>
-
     <div style="margin:14px 0 6px;font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px">
       📋 Quotes
       <span style="font-size:11px;font-weight:400;color:var(--muted)">Add one quote per line of business</span>
@@ -4019,11 +4043,17 @@ function leadForm(d, defaultLeadType){
     <div id="quotes-container">${quoteRows}</div>
     <button class="add-row-btn" onclick="addQuoteRow()">+ Add Another Quote</button>
 
-    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="l-nt" rows="2">${ed?d.notes:''}</textarea></div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="l-nt" rows="3">${ed?d.notes:''}</textarea></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveLead('${ed?d.id:''}')">${ed?'Save Changes':'Add Lead'}</button>
     </div>`;
+}
+
+// Status buttons drive the (hidden) #l-st select that saveLead() reads
+function setLeadStatusBtn(stage){
+  const sel=document.getElementById('l-st'); if(sel) sel.value=stage;
+  document.querySelectorAll('#l-st-btns button').forEach(b=>{ b.className='btn '+(b.dataset.stage===stage?'btn-primary':'btn-ghost')+' btn-sm'; });
 }
 
 // Show/hide commercial fields when lead type changes
@@ -4046,31 +4076,18 @@ function buildQuoteRow(q, i){
       <span>Quote ${i+1}</span>
       ${i>0?`<button class="remove-btn" onclick="removeQuoteRow(${i})" title="Remove this quote">✕</button>`:'<span></span>'}
     </div>
-    <div class="form-row">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
       <div class="form-group"><label class="form-label">Line of Business</label>
         <select class="form-input qr-line">${['Auto','Home','Life','Commercial','Umbrella','Specialty','Wind/Hail Buydown'].map(x=>`<option${q.line===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Carrier</label>
         <input class="form-input qr-carrier" value="${q.carrier||''}" placeholder="e.g. State Farm">
       </div>
-    </div>
-    <div class="form-row">
       <div class="form-group"><label class="form-label">Est. Annual Premium ($)</label>
         <input class="form-input qr-premium" type="number" value="${q.premium||''}" placeholder="1200">
       </div>
-      <div class="form-group"><label class="form-label">Quote Notes</label>
-        <input class="form-input qr-notes" value="${q.notes||''}" placeholder="Coverage details, deductible, etc.">
-      </div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Current Carrier</label>
-        <input class="form-input qr-currcarrier" value="${q.currentCarrier||''}" placeholder="e.g. Allstate">
-      </div>
-      <div class="form-group"><label class="form-label">Renewal Date</label>
-        <input class="form-input qr-renewal" type="date" value="${q.renewalDate||''}">
-      </div>
-    </div>
-    <div class="form-row">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
       <div class="form-group"><label class="form-label">Quote Outcome</label>
         <select class="form-input qr-status">
           <option value="">Open — not decided</option>
@@ -4079,7 +4096,15 @@ function buildQuoteRow(q, i){
           <option value="on-hold"${q.status==='on-hold'?' selected':''}>⏸ On Hold</option>
         </select>
       </div>
-      <div class="form-group"></div>
+      <div class="form-group"><label class="form-label">Current Carrier</label>
+        <input class="form-input qr-currcarrier" value="${q.currentCarrier||''}" placeholder="e.g. Allstate">
+      </div>
+      <div class="form-group"><label class="form-label">Renewal Date</label>
+        <input class="form-input qr-renewal" type="date" value="${q.renewalDate||''}">
+      </div>
+    </div>
+    <div class="form-group" style="margin-bottom:0"><label class="form-label">Quote Notes</label>
+      <input class="form-input qr-notes" value="${q.notes||''}" placeholder="Coverage details, deductible, etc.">
     </div>
   </div>`;
 }
