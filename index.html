@@ -6644,7 +6644,10 @@ function annivOpenImport(){
     <div class="form-group"><label class="form-label">CSV file *</label><input type="file" id="ai-file" accept=".csv,text/csv" onchange="annivImportFileChosen(this)"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Batch tag *</label><input class="form-input" id="ai-batch" value="${defBatch}"></div>
-      <div class="form-group"><label class="form-label">Leads per weekly wave</label><input class="form-input" id="ai-wave" type="number" min="1" value="125"></div>
+      <div class="form-group"><label class="form-label">Split into weekly waves</label>
+        <div style="display:flex;gap:6px"><select class="form-input" id="ai-wmode" style="flex:1.4" onchange="annivWaveModeChanged()"><option value="size">Leads per wave</option><option value="count">Number of waves</option><option value="custom">Custom sizes</option></select>
+        <input class="form-input" id="ai-wave" style="flex:1" value="125" oninput="annivOptChanged()"></div>
+        <div id="ai-whint" style="font-size:11px;color:var(--muted);margin-top:3px">Each wave mails one week after the previous one.</div></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Wave 1 mail date (Day 0)</label><input class="form-input" id="ai-mail" type="date" value="${annivNextMonday()}"></div>
@@ -6669,12 +6672,45 @@ function annivImportFileChosen(inp){
   r.onload=()=>{ window._annivCsvText=String(r.result||''); annivImportPreview(); };
   r.readAsText(f);
 }
+// Wave sizing: "size" = N leads per wave, "count" = split evenly into N waves,
+// "custom" = explicit sizes like "100, 150, 125" (any leftover leads become one extra final wave)
+function annivWaveSizes(total,o){
+  total=Math.max(0,total);
+  if(!total) return {sizes:[],note:''};
+  const ints=String(o.waveInput||'').split(/[\s,;]+/).map(s=>parseInt(s,10)).filter(n=>n>0);
+  let sizes=[],note='';
+  if(o.waveMode==='count'){
+    const n=Math.min(Math.max(ints[0]||1,1),total), base=Math.floor(total/n), rem=total%n;
+    for(let i=0;i<n;i++) sizes.push(base+(i<rem?1:0));
+  } else if(o.waveMode==='custom'){
+    sizes=ints.slice();
+    if(!sizes.length) sizes=[total];
+    let sum=0, kept=[];
+    for(const s of sizes){ if(sum>=total) break; kept.push(Math.min(s,total-sum)); sum+=kept[kept.length-1]; }
+    sizes=kept;
+    if(sum<total){ sizes.push(total-sum); note=`Your sizes add up to ${sum}, so the remaining ${total-sum} lead(s) were put in one extra final wave.`; }
+    else if(ints.reduce((a,b)=>a+b,0)>total) note=`Your sizes add up to ${ints.reduce((a,b)=>a+b,0)} but only ${total} leads are importing — the last wave(s) were trimmed.`;
+  } else {
+    const n=Math.max(ints[0]||125,1);
+    for(let left=total;left>0;left-=n) sizes.push(Math.min(n,left));
+  }
+  return {sizes,note};
+}
+function annivWaveOf(i,sizes){ let c=0; for(let w=0;w<sizes.length;w++){ c+=sizes[w]; if(i<c) return w+1; } return sizes.length||1; }
+function annivWaveModeChanged(){
+  const m=document.getElementById('ai-wmode').value, inp=document.getElementById('ai-wave'), h=document.getElementById('ai-whint');
+  if(m==='size'){ inp.value='125'; h.textContent='Leads in each wave (the last wave gets whatever is left). Each wave mails one week after the previous one.'; }
+  else if(m==='count'){ inp.value='4'; h.textContent='Number of waves — leads are split as evenly as possible. Each wave mails one week after the previous one.'; }
+  else { inp.value='100, 150, 125, 125'; h.textContent='Size of each wave in order, separated by commas. Leftover leads go in one extra final wave.'; }
+  annivOptChanged();
+}
+function annivOptChanged(){ if(window._annivCsvText) annivImportPreview(); }
 function annivReadOpts(){
   const g=id=>document.getElementById(id);
   const producers=DB.producers.map(p=>p.id);
   return {
     batch:(g('ai-batch').value||'').trim(),
-    waveSize:Math.max(1,parseInt(g('ai-wave').value,10)||125),
+    waveMode:g('ai-wmode').value,waveInput:g('ai-wave').value,
     mailDate:g('ai-mail').value||annivNextMonday(),
     fmt:g('ai-fmt').value,
     split:g('ai-split').value,
@@ -6774,9 +6810,10 @@ function annivBuildPlan(){
   // ── waves: soonest anniversary first, weekly mail drops ──
   accepted.forEach(a=>{ a.anniversaryDate=annivNextOnOrAfter(a.saleDate,o.mailDate); });
   accepted.sort((a,b)=>a.anniversaryDate.localeCompare(b.anniversaryDate)||a._rowNo-b._rowNo);
+  const sizes1=annivWaveSizes(accepted.length,o).sizes;
   let finalList=[];
   accepted.forEach((a,i)=>{
-    const wave=Math.floor(i/o.waveSize)+1;
+    const wave=annivWaveOf(i,sizes1);
     a.wave=wave; a.mailDate=annivAddDays(o.mailDate,7*(wave-1));
     const gap=annivDaysBetween(a.mailDate,a.anniversaryDate);
     a.outOfWindow=gap<20||gap>100;
@@ -6787,9 +6824,10 @@ function annivBuildPlan(){
     finalList.push(a);
   });
   // re-wave after any window skips so waves stay full
+  const ws2=annivWaveSizes(finalList.length,o), sizes2=ws2.sizes; warn.waveNote=ws2.note;
   const idxCount={};
   finalList.forEach((a,i)=>{
-    a.wave=Math.floor(i/o.waveSize)+1; a.mailDate=annivAddDays(o.mailDate,7*(a.wave-1));
+    a.wave=annivWaveOf(i,sizes2); a.mailDate=annivAddDays(o.mailDate,7*(a.wave-1));
     a.agentId=o.split==='all'?(o.producers[i%o.producers.length]||''):o.split;
     // index within this wave AND producer, so each producer's calls spread across every day of the window
     const ck=a.wave+'|'+a.agentId; a.idx=(idxCount[ck]=(idxCount[ck]||0)+1)-1;
@@ -6823,6 +6861,7 @@ function annivImportPreview(){
       ${plan.warn.outOfWindow?`⚠️ ${plan.warn.outOfWindow} row(s) have an anniversary outside the 20–100 day window${plan.opts.skipWindow?' (skipped)':' (still imported)'}. `:''}
       ${plan.warn.noPhone?`${plan.warn.noPhone} with no valid phone (no call tasks — mail only). `:''}
       ${plan.warn.noEmail?`${plan.warn.noEmail} with no email (no email task). `:''}
+      ${plan.warn.waveNote?`ℹ️ ${annivEsc(plan.warn.waveNote)} `:''}
       ${plan.warn.multiBatch?`⚠️ File contains ${plan.warn.multiBatch} different batch tags — your Batch tag above is used for all rows.`:''}
     </div>
     ${plan.skipped.length?`<details open><summary style="cursor:pointer;font-size:12px;font-weight:600">Skipped duplicates (${plan.skipped.length}) <button class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="event.preventDefault();annivDownloadSkipped()">⬇ Download CSV</button></summary>
@@ -6845,12 +6884,12 @@ async function annivImportCommit(){
   const o=plan.opts;
   // Two-step confirm on the button itself (native confirm() dialogs are blocked in some embedded browsers)
   const goBtn=document.getElementById('ai-go');
-  const sig=`${o.batch}|${plan.accepted.length}|${o.waveSize}|${o.mailDate}|${o.split}`;
+  const sig=`${o.batch}|${plan.accepted.length}|${o.waveMode}:${o.waveInput}|${o.mailDate}|${o.split}`;
   if(window._annivConfirmSig!==sig){
     window._annivConfirmSig=sig;
     const exists=(DB.anniversaryLeads||[]).some(a=>a.batch===o.batch);
     goBtn.textContent=`✔ Confirm: import ${plan.accepted.length} leads`;
-    if(out) out.insertAdjacentHTML('afterbegin',`<div style="background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px">Ready to import <b>${plan.accepted.length}</b> leads as batch <b>${annivEsc(o.batch)}</b> in ${Math.ceil(plan.accepted.length/o.waveSize)} weekly wave(s); ${plan.skipped.length} duplicate(s) skipped.${exists?` <b>Batch "${annivEsc(o.batch)}" already exists — these will be added to it.</b>`:''} Click the button again to confirm.</div>`);
+    if(out) out.insertAdjacentHTML('afterbegin',`<div style="background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px">Ready to import <b>${plan.accepted.length}</b> leads as batch <b>${annivEsc(o.batch)}</b> in ${new Set(plan.accepted.map(a=>a.wave)).size} weekly wave(s); ${plan.skipped.length} duplicate(s) skipped.${exists?` <b>Batch "${annivEsc(o.batch)}" already exists — these will be added to it.</b>`:''} Click the button again to confirm.</div>`);
     return;
   }
   window._annivConfirmSig=null;
