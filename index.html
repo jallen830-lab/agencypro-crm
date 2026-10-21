@@ -2830,7 +2830,42 @@ function renderPipeline(){
     'Quote Not Closed': {label:'QNC',       bg:'#ffedd5', fg:'#c2410c'},
     'Cross Sale':       {label:'Cross-Sell',bg:'#e0e7ff', fg:'#4338ca'},
   };
-  const tagHtml = t => t ? `<span style="display:inline-block;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;background:${t.bg};color:${t.fg};margin-left:4px;vertical-align:middle">${t.label}</span>` : '';
+  // ── Shared card layout (same look as the Anniversary board): name, colored pills,
+  // detail lines, then premium / producer / actions ──
+  const LINE_PILL = {Auto:['#dbeafe','#1d4ed8'],Home:['#ccfbf1','#0f766e'],Life:['#fef3c7','#b45309'],Commercial:['#ede9fe','#6d28d9'],
+    Bundle:['#dcfce7','#15803d'],Umbrella:['#e0e7ff','#4338ca'],Specialty:['#fce7f3','#be185d'],'Wind/Hail Buydown':['#cffafe','#0e7490']};
+  const pill = (text,bg,fg) => `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${bg};color:${fg}">${annivEsc(text)}</span>`;
+  const linePill = x => pill(x,...(LINE_PILL[x]||['#f1f5f9','#475569']));
+  const tagPill = t => t ? pill(t.label,t.bg,t.fg) : '';
+  const ageText = (label,iso) => { if(!iso) return ''; const d=-daysUntil(iso); return `${label} ${d<=0?'today':d+'d ago'}`; };
+  const cardHtml = (i,stage) => `
+    <div class="deal-card" style="border-left-color:${STAGE_COLORS[stage]}" onclick="${i.onClick}">
+      <div style="font-size:13px;font-weight:600;margin-bottom:3px">${annivEsc(i.name)}</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">${i.pills}</div>
+      ${i.company?`<div style="font-size:11px;color:#1d4ed8;font-weight:600;margin-bottom:2px">🏢 ${annivEsc(i.company)}</div>`:''}
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i.detail||'&nbsp;'}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(i.premium)}</span>
+        <div style="display:flex;align-items:center;gap:4px">
+          <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(i.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(i.agentId)}</div>
+          ${i.task?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.task}" title="Add a task for this lead">+ Task</button>`:''}
+          <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.del}" title="Delete">🗑</button>
+        </div>
+      </div>
+    </div>`;
+  const leadItem = l => {
+    const lines=[...new Set([...(l.quotes||[]),...(l.soldQuotes||[])].map(q=>q.line).filter(Boolean))];
+    if(!lines.length&&l.line) lines.push(l.line);
+    return {
+      id:l.id, name:`${l.firstName||''} ${l.lastName||''}`.trim(), company:l.companyName,
+      pills:[...lines.slice(0,3).map(linePill), l.source?pill(l.source,'#f1f5f9','#475569'):'', tagPill(TYPE_TAG[l.leadType])].join(''),
+      detail:[l.phone?`📞 ${annivEsc(l.phone)}`:'', l.status==='Quoted'&&l.quotedDate?ageText('Quoted',l.quotedDate):ageText('Added',l.date)].filter(Boolean).join(' · '),
+      premium:l.premium, status:l.status, agentId:l.agentId,
+      onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
+      task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`,
+      del:`deleteLead('${l.id}')`
+    };
+  };
 
   // Helper to build a kanban board
   function buildBoard(leads, boardId, countId, totalId){
@@ -2843,20 +2878,7 @@ function renderPipeline(){
         <div class="p-col-head" style="background:${STAGE_BG[stage]};color:${STAGE_COLORS[stage]}">
           <span>${stage}</span><span>${sl.length}</span>
         </div>
-        <div class="p-col-body">${sl.map(l=>`
-          <div class="deal-card" style="border-left-color:${STAGE_COLORS[stage]}" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">
-            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${l.firstName} ${l.lastName}</div>
-            ${l.companyName?`<div style="font-size:11px;color:#1d4ed8;font-weight:600;margin-bottom:1px">🏢 ${l.companyName}</div>`:''}
-            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${l.line} — ${l.source}</div>
-            <div style="display:flex;align-items:center;justify-content:space-between">
-              <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(l.premium)}</span>
-              <div style="display:flex;align-items:center;gap:4px">
-                <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
-                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>
-                <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();deleteLead('${l.id}')" title="Delete this lead">🗑</button>
-              </div>
-            </div>
-          </div>`).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
+        <div class="p-col-body">${sl.map(l=>cardHtml(leadItem(l),stage)).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
         </div></div>`;}).join('');
   }
 
@@ -2865,18 +2887,12 @@ function renderPipeline(){
 
   // ── Merged Personal Lines board: PL/Winback/QNC/Cross-Sale leads + cross-sell opps ──
   const plItems = [
-    ...plLeads.map(l=>({
-      id:l.id, name:`${l.firstName} ${l.lastName}`, company:l.companyName,
-      sub:`${l.line} — ${l.source}`, premium:l.premium, status:l.status, agentId:l.agentId,
-      tag: TYPE_TAG[l.leadType]||null,
-      onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
-      task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`,
-      del:`deleteLead('${l.id}')`
-    })),
+    ...plLeads.map(leadItem),
     ...csOpps.map(c=>({
       id:c.id, name:c.customerName||'Unknown', company:null,
-      sub:c.line+(c.carrier?' — '+c.carrier:''), premium:c.premium, status:c.status, agentId:c.agentId,
-      tag: TYPE_TAG['Cross Sale'],
+      pills:[c.line?linePill(c.line):'', c.carrier?pill(c.carrier,'#f1f5f9','#475569'):'', tagPill(TYPE_TAG['Cross Sale'])].join(''),
+      detail:c.status==='Quoted'&&c.quotedDate?ageText('Quoted',c.quotedDate):'',
+      premium:c.premium, status:c.status, agentId:c.agentId,
       onClick:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`,
       task:`openModal('crossSellTask',DB.crosssells.find(x=>x.id==='${c.id}'))`,
       del:`deleteCrossSell('${c.id}')`
@@ -2893,20 +2909,7 @@ function renderPipeline(){
         <div class="p-col-head" style="background:${STAGE_BG[stage]};color:${STAGE_COLORS[stage]}">
           <span>${stage}</span><span>${sl.length}</span>
         </div>
-        <div class="p-col-body">${sl.map(i=>`
-          <div class="deal-card" style="border-left-color:${STAGE_COLORS[stage]}" onclick="${i.onClick}">
-            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${i.name}${tagHtml(i.tag)}</div>
-            ${i.company?`<div style="font-size:11px;color:#1d4ed8;font-weight:600;margin-bottom:1px">🏢 ${i.company}</div>`:''}
-            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${i.sub}</div>
-            <div style="display:flex;align-items:center;justify-content:space-between">
-              <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(i.premium)}</span>
-              <div style="display:flex;align-items:center;gap:4px">
-                <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(i.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(i.agentId)}</div>
-                ${i.task?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.task}" title="Add a task for this lead">+ Task</button>`:''}
-                <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.del}" title="Delete">🗑</button>
-              </div>
-            </div>
-          </div>`).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
+        <div class="p-col-body">${sl.map(i=>cardHtml(i,stage)).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
         </div></div>`;}).join('');
   }
 
