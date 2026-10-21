@@ -6613,7 +6613,7 @@ function annivBuildCadenceTasks(id,rec,opts){
   if(rec.phone){
     add('a_call1',3,due1,'high','call',`📞 Day 3–5 — First call: ${nm} (${seg}). Reference the mailer; ask when their home policy renews.`);
     add('a_call2',7,due2,'high','call',`📞 Day 7–10 — Second call: ${nm} (${seg}).${rec.email?' Send the follow-up email too.':''}`);
-    add('a_final',21,annivBizDay(annivAddDays(M,21)),'medium','call',`📞 Day 21 — Final call: ${nm} (${seg}). Last attempt; capture their renewal month, then mark Not Now if no conversation.`);
+    add('a_final',21,annivBizDay(annivAddDays(M,21)),'medium','call',`📞 Day 21 — Final call: ${nm} (${seg}). Last attempt; capture their renewal month, then mark Not Now if not quoted.`);
   }
   if(rec.email) add('a_email',7,due2,'medium','email',`📧 Day 7–10 — Email ${nm} (${seg}): follow up on the mailer and calls.`);
   return out;
@@ -7151,7 +7151,7 @@ async function annivResurface(id,auto){
 // ── AUTOMATIC STAGE LOGIC (runs whenever leads or tasks sync) ─────────
 //  1. Not Now leads whose resurface date has arrived come back (new cycle)
 //  2. Mailed → Contacting once any call/email task has been completed
-//  3. Cadence over with no conversation (final call done, or Day 21 passed
+//  3. Cadence over without a quote (any stage before Quoted) (final call done, or Day 21 passed
 //     for leads with no phone) → Not Now automatically
 let _annivSyncBusy=false;
 async function annivSync(){
@@ -7169,7 +7169,7 @@ async function annivSync(){
     const byLead=new Map();
     (DB.tasks||[]).forEach(t=>{ if(t.type==='anniversary-followup'&&t.anniversaryId&&t.taskType!=='mailer'){ (byLead.get(t.anniversaryId)||byLead.set(t.anniversaryId,[]).get(t.anniversaryId)).push(t); } });
     for(const l of leads){
-      if(l.stage!=='Mailed'&&l.stage!=='Contacting') continue;
+      if(!['Mailed','Contacting','Conversation'].includes(l.stage)) continue;
       const ts=(byLead.get(l.id)||[]).filter(t=>(t.cycle||1)===(l.cycle||1));
       const worked=ts.some(t=>t.done&&!t.cancelledReason);
       if(l.stage==='Mailed'&&worked){
@@ -7178,7 +7178,7 @@ async function annivSync(){
       }
       const fin=ts.find(t=>t.seqKey==='a_final');
       const over=fin?(fin.done&&!fin.cancelledReason):(l.cadenceEnd&&l.cadenceEnd<today);
-      if(over) await annivNotNow(l.id,'Cadence ended — no conversation',true);
+      if(over) await annivNotNow(l.id,'Cadence ended — not quoted',true);
     }
   }catch(e){ console.error('annivSync error:',e); }
   finally{ _annivSyncBusy=false; }
