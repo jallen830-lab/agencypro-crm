@@ -6889,9 +6889,9 @@ function annivDownloadSkipped(){
 }
 async function annivImportCommit(){
   const out=document.getElementById('ai-out');
-  let plan; try{ plan=annivBuildPlan(); }catch(e){ alert('Could not read the file: '+e.message); return; }
-  if(plan.error){ alert(plan.error); return; }
-  if(!plan.accepted.length){ alert('Nothing to import — every row was skipped or rejected.'); return; }
+  let plan; try{ plan=annivBuildPlan(); }catch(e){ annivWarn('Could not read the file: '+e.message); return; }
+  if(plan.error){ annivWarn(plan.error); return; }
+  if(!plan.accepted.length){ annivWarn('Nothing to import — every row was skipped or rejected.'); return; }
   const o=plan.opts;
   // Two-step confirm on the button itself (native confirm() dialogs are blocked in some embedded browsers)
   const goBtn=document.getElementById('ai-go');
@@ -7127,7 +7127,7 @@ async function annivSaveSold(id){
   const l=annivLeadById(id); if(!l) return;
   const line=document.getElementById('as-line').value, carrier=document.getElementById('as-car').value.trim();
   const premium=Number(document.getElementById('as-prem').value)||0;
-  if(premium<=0){ alert('Enter the annual premium.'); return; }
+  if(premium<=0){ annivWarn('Enter the annual premium.'); return; }
   const today=annivToday();
   const fn=l.firstName||l.ownerName, ln=l.firstName?(l.lastName||''):'';
   await db.collection('leads').add({
@@ -7212,9 +7212,27 @@ async function annivQuoteNotClosed(id,reason){
   logActivity('✕','#ffedd5',`Anniversary: <b>${annivEsc(info.d.ownerName)}</b> → Quote Not Closed — in Remarketing, resurfaces ${fmtDate(info.r)}`);
   toast(`Quote Not Closed — in Remarketing, back on ${fmtDate(info.r)}`); closeModal();
 }
-async function annivNeverContact(id){
+// Inline message + yes/no modal: native alert()/confirm() are silently blocked in some embedded browsers
+function annivWarn(msg){
+  const mc=document.getElementById('modal-content');
+  if(mc&&document.getElementById('overlay').style.display!=='none'){
+    let el=document.getElementById('anniv-msg');
+    if(!el){ el=document.createElement('div'); el.id='anniv-msg'; el.style.cssText='background:#fee2e2;color:#991b1b;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px'; mc.insertBefore(el,mc.firstChild); }
+    el.textContent=msg;
+  }
+  toast(msg);
+}
+function annivAsk(title,msg,yesLabel,yesCode){
+  annivShowModal(`<div class="modal-title">${title}</div>
+    <div style="font-size:13px;line-height:1.6;white-space:pre-line">${annivEsc(msg)}</div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="${yesCode}">${yesLabel}</button></div>`,440);
+}
+function annivNeverContact(id){
   const l=annivLeadById(id); if(!l) return;
-  if(!confirm(`Archive ${l.ownerName} as Never Contact?\n\nThey will be removed from the pipeline and will NOT resurface.`)) return;
+  annivAsk('🚫 Never Contact',`Archive ${l.ownerName} as Never Contact?\n\nThey will be removed from the pipeline and will NOT resurface.`,'Archive',`annivDoNeverContact('${id}')`);
+}
+async function annivDoNeverContact(id){
+  const l=annivLeadById(id); if(!l) return;
   await db.collection('anniversaryLeads').doc(id).update({stage:'Archived',neverContact:true,archivedAt:annivToday(),resurfaceDate:firebase.firestore.FieldValue.delete()});
   await annivCancelTasks(id,'Archived',['anniversary-followup','quoted-followup']);
   logActivity('🚫','#fee2e2',`Anniversary: <b>${annivEsc(l.ownerName)}</b> archived — never contact`);
@@ -7222,9 +7240,9 @@ async function annivNeverContact(id){
 }
 function annivReturnNow(id){
   const l=annivLeadById(id); if(!l) return;
-  if(!confirm(`Return ${l.ownerName} to the Anniversary pipeline now?\n\nA fresh mailer + call cadence will start today.`)) return;
-  annivResurface(id,false).then(()=>closeModal());
+  annivAsk('↩ Return to Pipeline',`Return ${l.ownerName} to the Anniversary pipeline now?\n\nA fresh mailer + call cadence will start today.`,'Return Now',`annivDoReturnNow('${id}')`);
 }
+function annivDoReturnNow(id){ annivResurface(id,false).then(()=>closeModal()); }
 function annivResurfBatch(todayISO){ return 'Anniv-Resurf-'+annivMonthYY(todayISO); }
 // Starts a brand-new cycle for a Not Now lead. The finished cycle is archived in
 // `history` (so its batch's report numbers never change), and the lead re-enters
@@ -7317,7 +7335,7 @@ function annivDoExport(){
   let list=(DB.anniversaryLeads||[]).filter(l=>l.batch===b&&(!w||String(l.wave)===w)&&l.stage!=='Archived'&&!l.neverContact);
   if(which==='2') list=list.filter(l=>['Mailed','Contacting','Conversation'].includes(l.stage));
   else list=list.filter(l=>l.stage!=='Not Now');
-  if(!list.length){ alert('No leads match.'); return; }
+  if(!list.length){ annivWarn('No leads match that batch, wave and mailer.'); return; }
   list.sort((a,c)=>(a.wave||0)-(c.wave||0)||(a.ownerName||'').localeCompare(c.ownerName||''));
   const rows=[['Owner','Address','City','State','ZIP','Segment','Wave','Mail Date','Property Address','TAD Account']];
   list.forEach(l=>{ const m=annivMailBlock(l); rows.push([l.ownerName,m.addr,m.city,m.state,m.zip,l.segment,l.wave||'',l.mailDate,l.propertyAddress,l.tadAccount]); });
@@ -7352,14 +7370,14 @@ function annivDeleteBatchInfo(){
 }
 async function annivDeleteBatch(){
   const b=document.getElementById('ad-batch').value;
-  if(document.getElementById('ad-confirm').value.trim()!==b){ alert(`Type "${b}" exactly to confirm.`); return; }
+  if(document.getElementById('ad-confirm').value.trim()!==b){ annivWarn(`Type "${b}" exactly in the box to confirm.`); return; }
   const s=annivBatchScope(b), btn=document.getElementById('ad-go'); btn.disabled=true; btn.textContent='Deleting…';
   try{
     const refs=[...s.tasks.map(t=>db.collection('tasks').doc(t.id)),...s.leads.map(l=>db.collection('anniversaryLeads').doc(l.id))];
     for(let i=0;i<refs.length;i+=400){ const bt=db.batch(); refs.slice(i,i+400).forEach(r=>bt.delete(r)); await bt.commit(); }
     logActivity('🗑','#fee2e2',`Anniversary batch <b>${annivEsc(b)}</b> deleted — ${s.leads.length} leads, ${s.tasks.length} tasks`);
     toast(`Batch ${b} deleted`); closeModal();
-  }catch(e){ alert('Delete failed: '+e.message); btn.disabled=false; btn.textContent='Delete Batch'; }
+  }catch(e){ annivWarn('Delete failed: '+e.message); btn.disabled=false; btn.textContent='Delete Batch'; }
 }
 
 // ── BATCH REPORTING (KPIs page) ───────────────────────────────────────
