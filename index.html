@@ -6801,6 +6801,7 @@ function annivBuildPlan(){
   return {opts:o,accepted:finalList,skipped,rejected,warn,totalRows:table.length-1};
 }
 function annivImportPreview(){
+  window._annivConfirmSig=null; const goB=document.getElementById('ai-go'); if(goB) goB.textContent='Import';
   const out=document.getElementById('ai-out'); if(!out) return;
   let plan;
   try{ plan=annivBuildPlan(); }catch(e){ out.innerHTML=`<div style="color:#b91c1c;font-size:13px">Could not read the file: ${annivEsc(e.message)}</div>`; return; }
@@ -6842,8 +6843,17 @@ async function annivImportCommit(){
   if(plan.error){ alert(plan.error); return; }
   if(!plan.accepted.length){ alert('Nothing to import — every row was skipped or rejected.'); return; }
   const o=plan.opts;
-  if((DB.anniversaryLeads||[]).some(a=>a.batch===o.batch) && !confirm(`Batch "${o.batch}" already exists. Add these leads to it anyway?`)) return;
-  if(!confirm(`Import ${plan.accepted.length} leads as batch "${o.batch}" in ${Math.ceil(plan.accepted.length/o.waveSize)} weekly wave(s)?\n\n${plan.skipped.length} duplicate(s) will be skipped.`)) return;
+  // Two-step confirm on the button itself (native confirm() dialogs are blocked in some embedded browsers)
+  const goBtn=document.getElementById('ai-go');
+  const sig=`${o.batch}|${plan.accepted.length}|${o.waveSize}|${o.mailDate}|${o.split}`;
+  if(window._annivConfirmSig!==sig){
+    window._annivConfirmSig=sig;
+    const exists=(DB.anniversaryLeads||[]).some(a=>a.batch===o.batch);
+    goBtn.textContent=`✔ Confirm: import ${plan.accepted.length} leads`;
+    if(out) out.insertAdjacentHTML('afterbegin',`<div style="background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px">Ready to import <b>${plan.accepted.length}</b> leads as batch <b>${annivEsc(o.batch)}</b> in ${Math.ceil(plan.accepted.length/o.waveSize)} weekly wave(s); ${plan.skipped.length} duplicate(s) skipped.${exists?` <b>Batch "${annivEsc(o.batch)}" already exists — these will be added to it.</b>`:''} Click the button again to confirm.</div>`);
+    return;
+  }
+  window._annivConfirmSig=null;
   document.getElementById('ai-go').disabled=true; document.getElementById('ai-prev').disabled=true;
   const say=m=>{ if(out) out.innerHTML=`<div style="font-size:13px;font-weight:600;color:var(--teal)">${m}</div>`; };
   try{
