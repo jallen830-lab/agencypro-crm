@@ -515,6 +515,9 @@ select.form-input{cursor:pointer}
           <button class="pipeline-tab" id="ptab-commercial" onclick="switchPipelineTab(&#39;commercial&#39;)">
             🏢 Commercial <span class="ptab-count" id="ptab-commercial-count"></span>
           </button>
+          <button class="pipeline-tab" id="ptab-anniversary" onclick="switchPipelineTab(&#39;anniversary&#39;)">
+            🏡 Anniversary <span class="ptab-count" id="ptab-anniversary-count"></span>
+          </button>
         </div>
 
         <!-- PERSONAL LINES board (Personal Lines + Winbacks + Quote Not Closed + Cross-Sell) -->
@@ -549,6 +552,25 @@ select.form-input{cursor:pointer}
             <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto" onclick="openModalWithType(&#39;lead&#39;,&#39;Commercial&#39;)">+ Add Commercial Lead</button>
           </div>
           <div class="pipeline-wrap" id="pipeline-commercial"></div>
+        </div>
+
+        <!-- ANNIVERSARY board (homeowner renewal outreach — see ANNIVERSARY PIPELINE script) -->
+        <div id="ps-anniversary" style="display:none">
+          <div class="pipeline-section-header" style="background:linear-gradient(90deg,#b45309,#f59e0b)">
+            <span>🏡 Anniversary</span>
+            <span id="ps-anniversary-count" class="ps-count"></span>
+            <span id="ps-anniversary-total" class="ps-total"></span>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-left:auto;margin-right:6px" onclick="annivOpenExport()">📬 Mailer List</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none;margin-right:6px" onclick="annivOpenDeleteBatch()">🗑 Delete Batch</button>
+            <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="annivOpenImport()">📥 Import CSV</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <select class="form-input" style="width:150px;font-size:12px" id="anniv-f-batch" onchange="annivSetFilter('batch',this.value)"></select>
+            <select class="form-input" style="width:150px;font-size:12px" id="anniv-f-seg" onchange="annivSetFilter('segment',this.value)"></select>
+            <select class="form-input" style="width:120px;font-size:12px" id="anniv-f-wave" onchange="annivSetFilter('wave',this.value)"></select>
+            <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px"><input type="checkbox" id="anniv-f-unmailed" onchange="annivSetFilter('showUnmailed',this.checked)"> Show waves not yet mailed</label>
+          </div>
+          <div class="pipeline-wrap" id="pipeline-anniversary"></div>
         </div>
       </div>
 
@@ -904,12 +926,19 @@ select.form-input{cursor:pointer}
           </div>
           <div id="kpi-leads-folio-list"></div>
         </div>
-        <div class="card">
+        <div class="card" style="margin-bottom:14px">
           <div class="card-header">
             <div class="card-title">📊 Quotes — Current Folio Period</div>
             <span style="font-size:12px;color:var(--muted)" id="kpi-folio-label"></span>
           </div>
           <div id="kpi-folio-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🏡 Anniversary Batches</div>
+            <span style="font-size:12px;color:var(--muted)">Results per mail batch &amp; segment</span>
+          </div>
+          <div id="kpi-anniv-list"></div>
         </div>
       </div>
 
@@ -1084,9 +1113,19 @@ function startListeners(){
   });
   db.collection('tasks').onSnapshot(snap=>{
     DB.tasks=snap.docs.map(d=>({id:d.id,...d.data()}));
+    DB._tasksReady=true;
     if(currentView==='tasks') renderTasks();
     updateTaskBadge();
+    annivSync();
   });
+  db.collection('anniversaryLeads').onSnapshot(snap=>{
+    DB.anniversaryLeads=snap.docs.map(d=>({id:d.id,...d.data()}));
+    DB._annivReady=true;
+    if(currentView==='pipeline') renderPipeline();
+    if(currentView==='remarketing') renderRemarketing();
+    if(currentView==='kpis') renderKPIs();
+    annivSync();
+  }, err=>console.error('anniversaryLeads listener error:',err));
   db.collection('crosssells').onSnapshot(snap=>{
     DB.crosssells=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(currentView==='crosssell') renderCrossSell();
@@ -1886,8 +1925,15 @@ function renderRemarketing(){
     carrier:   c.carrier||'',
   }));
 
+  // Anniversary leads marked Not Now wait here until ~60 days before their next anniversary
+  const clAnniv = (DB.anniversaryLeads||[]).filter(a=>['Not Now','Quote Not Closed'].includes(a.stage)&&(!clAgent||a.agentId===clAgent)).map(a=>({
+    id:a.id, _isAnniv:true, firstName:a.ownerName||'', lastName:'', email:a.email||'',
+    line:'Home — Anniversary', premium:0, agentId:a.agentId, remarketDate:a.resurfaceDate||'',
+    notes:a.stage==='Quote Not Closed'?(a.qncReason||''):(a.notNowReason||''), date:a.qncAt||a.notNowAt||'', status:a.stage==='Quote Not Closed'?'Anniversary QNC':'Anniversary Not Now', segment:a.segment||'',
+  }));
+
   // Combine both into one list
-  const combined = [...clLeads, ...clCsells].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const combined = [...clLeads, ...clCsells, ...clAnniv].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const clPremium = combined.reduce((s,l)=>s+Number(l.premium||0),0);
   const uncontactedCount = combined.filter(l=>l.status==='Uncontacted').length;
   const lostCount = combined.filter(l=>['Closed Lost','Quote Not Closed','Customer Left'].includes(l.status)).length;
@@ -1905,7 +1951,9 @@ function renderRemarketing(){
     const rdBadge=rd
       ?`<span class="badge ${du<=0?'badge-green':du<=7?'badge-amber':'badge-blue'}">${du<=0?'Ready now':du+' days'}</span>`
       :`<span style="color:var(--muted);font-size:11px">Not set</span>`;
-    const typeBadge = l._isCsell
+    const typeBadge = l._isAnniv
+      ? `<span class="badge ${l.status==='Anniversary QNC'?'badge-orange':'badge-amber'}" style="font-size:10px">🏡 Anniversary ${l.status==='Anniversary QNC'?'QNC':'Not Now'}${l.segment?' — '+annivEsc(l.segment):''}</span>`
+      : l._isCsell
       ? `<span class="badge badge-purple" style="font-size:10px">Cross-Sell</span>`
       : l.status==='Customer Left'
         ? `<span class="badge badge-amber" style="font-size:10px">Former Customer</span>`
@@ -1921,17 +1969,20 @@ function renderRemarketing(){
         ${typeBadge}
       </td>
       <td>${l.line}${l._isCsell&&l.carrier?' — '+l.carrier:''}</td>
-      <td style="font-weight:600;color:var(--teal)">${fmt$(l.premium)}</td>
+      <td style="font-weight:600;color:var(--teal)">${l._isAnniv?'—':fmt$(l.premium)}</td>
       <td><span style="display:inline-flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:${agentColor(l.agentId)};display:inline-block"></span>${agentName(l.agentId)}</span></td>
       <td>${rdBadge}<div style="font-size:10px;color:var(--muted);margin-top:2px">${rd?fmtDate(rd):''}</div></td>
       <td style="max-width:140px;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${l.notes||''}">${l.notes||'—'}</td>
-      <td>
+      <td>${l._isAnniv ? `
+        <button class="btn btn-primary btn-sm" onclick="annivReturnNow('${l.id}')" title="Resurface now instead of waiting for the date">↩ Return Now</button>
+        <button class="btn btn-ghost btn-sm" onclick="annivOpenLead('${l.id}')">Open</button>
+        <button class="btn btn-danger btn-sm" onclick="annivNeverContact('${l.id}')" title="Never contact — archive">🚫</button>` : `
         <button class="btn btn-primary btn-sm" onclick="openRemarketModal('${l.id}','${l._isCsell?'cs':'lead'}')">📅 Set Date</button>
         ${!l._isCsell?`<button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button>`
           :`<button class="btn btn-ghost btn-sm" onclick="openModal('crosssell',DB.crosssells.find(x=>x.id==='${l.id}'))">Edit</button>`}
         ${!l._isCsell
           ?`<button class="btn btn-danger btn-sm" onclick="deleteCustomerRecord('${l.id}')" title="Delete permanently">🗑</button>`
-          :`<button class="btn btn-danger btn-sm" onclick="deleteCrossSell('${l.id}')" title="Delete permanently">🗑</button>`}
+          :`<button class="btn btn-danger btn-sm" onclick="deleteCrossSell('${l.id}')" title="Delete permanently">🗑</button>`}`}
       </td>
     </tr>`;}).join('')
   : `<tr><td colspan="7" class="empty-state" style="padding:24px">No Closed Lost leads or cross-sells in the remarket queue</td></tr>`;
@@ -2075,6 +2126,7 @@ function updateProducerFilters(){
 // ── NAVIGATION ──
 // ── KPI VIEW ─────────────────────────────────────────────────────────
 function renderKPIs(){
+  try{ renderAnniversaryKPIs(); }catch(e){ console.error('Anniversary KPIs error:',e); }
   const today = new Date().toISOString().slice(0,10);
   const folio = getCurrentFolioPeriod();
   const folioEnd = new Date(folio.periodEnd); folioEnd.setHours(23,59,59,999);
@@ -2734,13 +2786,13 @@ const STAGE_BG={New:'#dbeafe',Contacted:'#fef3c7',Quoted:'#ede9fe','Closed Won':
 let activePipelineTab = 'newleads';
 
 function switchPipelineTab(tab){
-  if(!['newleads','life','commercial'].includes(tab)) tab = 'newleads';
+  if(!['newleads','life','commercial','anniversary'].includes(tab)) tab = 'newleads';
   activePipelineTab = tab;
-  ['newleads','life','commercial'].forEach(t=>{
+  ['newleads','life','commercial','anniversary'].forEach(t=>{
     const btn = document.getElementById('ptab-'+t);
     if(btn) btn.className = 'pipeline-tab' + (t===tab?' active':'');
   });
-  ['ps-newleads','ps-life','ps-commercial'].forEach(id=>{
+  ['ps-newleads','ps-life','ps-commercial','ps-anniversary'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.style.display = id==='ps-'+tab ? 'block' : 'none';
   });
@@ -2857,6 +2909,8 @@ function renderPipeline(){
           </div>`).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}
         </div></div>`;}).join('');
   }
+
+  renderAnniversaryBoard();
 
   // Restore active tab display
   switchPipelineTab(activePipelineTab);
@@ -3646,6 +3700,15 @@ function taskTypeMeta(t){
       snoozeDays: 7,
     };
   }
+  if(t.type==='anniversary-followup'){
+    const hasScript = !!annivScriptSeqKey(t.seqKey);
+    const waveTxt = t.taskType==='mailer' ? ` — ${t.batch||''}${t.wave?' W'+t.wave:''}` : (t.leadName?' — '+t.leadName:'');
+    return {
+      chip: `🏡 Anniversary${waveTxt}`, chipColor:'#b45309',
+      scriptHtml: hasScript ? `<button class="btn btn-ghost btn-sm" style="color:#8b5cf6;font-size:11px" onclick="showAnnivScript('${t.id}')">📋 Script</button>` : '',
+      snoozeDays: 2,
+    };
+  }
   if(t.type==='lead-task'){
     return { chip: t.leadName ? `📝 ${t.leadName}` : '', chipColor:'#64748b', scriptHtml:'', snoozeDays: 7 };
   }
@@ -3808,7 +3871,7 @@ function renderReports(){
 
   // Existing charts
   const lC={Auto:'#3b82f6',Home:'#0ea5a0',Life:'#f59e0b',Commercial:'#8b5cf6',Bundle:'#22c55e',Umbrella:'#6366f1',Specialty:'#ec4899','Wind/Hail Buydown':'#14b8a6'};
-  const sC={Referral:'#22c55e',Internet:'#3b82f6','Walk-In':'#f59e0b','Cold Call':'#8b5cf6',Social:'#ef4444','Building Permit':'#0ea5a0','Neighborhood Farming':'#6366f1'};
+  const sC={Referral:'#22c55e',Internet:'#3b82f6','Walk-In':'#f59e0b','Cold Call':'#8b5cf6',Social:'#ef4444','Building Permit':'#0ea5a0','Neighborhood Farming':'#6366f1',Anniversary:'#b45309'};
   const stC={New:'#22c55e',Contacted:'#f59e0b',Quoted:'#3b82f6','Closed Won':'#0ea5a0','Closed Lost':'#ef4444'};
   const bL={},bS={},bSt={};
   leads.forEach(l=>{ bL[l.line]=(bL[l.line]||0)+1; bS[l.source]=(bS[l.source]||0)+1; bSt[l.status]=(bSt[l.status]||0)+1; });
@@ -3864,8 +3927,8 @@ async function logActivity(icon,bg,text){
 }
 
 // ── MODALS ──
-function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,crossSellTask:crossSellTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
-function closeModal(){ document.getElementById('overlay').style.display='none'; }
+function openModal(type,data){ document.getElementById('overlay').style.display='flex'; document.getElementById('modal-content').innerHTML=({lead:leadForm,task:taskForm,leadTask:leadTaskForm,crossSellTask:crossSellTaskForm,annivTask:annivTaskForm,producer:producerForm,renewal:renewalForm,settings:settingsForm,existingCustomer:existingCustomerForm,crosssell:crossSellForm,goals:goalsForm,referralPartner:referralPartnerForm,referralLog:referralLogForm})[type](data); }
+function closeModal(){ document.getElementById('overlay').style.display='none'; const m=document.querySelector('#overlay .modal'); if(m) m.style.width=''; }
 function closeOverlay(e){ if(e.target===document.getElementById('overlay'))closeModal(); }
 function agentOpts(sel){ return '<option value="">Unassigned</option>'+DB.producers.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${p.name}</option>`).join(''); }
 
@@ -3901,7 +3964,7 @@ function leadForm(d, defaultLeadType){
         <select class="form-input" id="l-lt" onchange="toggleCommercialFields()">${['Personal Lines','Winback','Quote Not Closed','Life Insurance','Commercial','Cross Sale'].map(x=>`<option${lt===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Lead Source</label>
-        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Building Permit','Neighborhood Farming'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Building Permit','Neighborhood Farming','Anniversary'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-row" id="referral-partner-row" style="display:${(ed?d.source:'Referral')==='Referral'?'flex':'none'}">
@@ -4227,10 +4290,11 @@ async function saveTask(id){
 }
 
 // ── AD-HOC TASK ON A LEAD ─────────────────────────────────────────────
-function crossSellTaskForm(cs){ return leadTaskForm(cs, true); }
-function leadTaskForm(lead, isCrossSell){
+// kind: undefined = a lead, 'crosssell' = a cross-sell opportunity, 'anniversary' = an Anniversary lead
+function crossSellTaskForm(cs){ return leadTaskForm(cs, 'crosssell'); }
+function leadTaskForm(lead, kind){
   const today = new Date().toISOString().slice(0,10);
-  const leadName = isCrossSell ? (lead.customerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
+  const leadName = kind==='crosssell' ? (lead.customerName||'') : kind==='anniversary' ? (lead.ownerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
   return `<div class="modal-title">+ Task — ${leadName}</div>
     <div class="form-group"><label class="form-label">Task Description *</label><input class="form-input" id="lt-tx" placeholder="Describe the task..."></div>
     <div class="form-row">
@@ -4238,19 +4302,19 @@ function leadTaskForm(lead, isCrossSell){
       <div class="form-group"><label class="form-label">Priority</label><select class="form-input" id="lt-pr">${['high','medium','low'].map(x=>`<option${x==='medium'?' selected':''}>${x}</option>`).join('')}</select></div>
     </div>
     <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="lt-ag">${agentOpts(lead.agentId||'')}</select></div>
-    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveLeadTask('${lead.id}'${isCrossSell?',true':''})">Add Task</button></div>`;
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveLeadTask('${lead.id}'${kind?`,'${kind}'`:''})">Add Task</button></div>`;
 }
-async function saveLeadTask(leadId, isCrossSell){
+async function saveLeadTask(leadId, kind){
   const text = document.getElementById('lt-tx').value.trim();
   if(!text){ alert('Description required'); return; }
   const due = document.getElementById('lt-du').value;
   const priority = document.getElementById('lt-pr').value;
   const agentId = document.getElementById('lt-ag').value;
-  const lead = isCrossSell ? DB.crosssells.find(c=>c.id===leadId) : DB.leads.find(l=>l.id===leadId);
-  const leadName = !lead ? '' : isCrossSell ? (lead.customerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
+  const lead = kind==='crosssell' ? DB.crosssells.find(c=>c.id===leadId) : kind==='anniversary' ? DB.anniversaryLeads.find(a=>a.id===leadId) : DB.leads.find(l=>l.id===leadId);
+  const leadName = !lead ? '' : kind==='crosssell' ? (lead.customerName||'') : kind==='anniversary' ? (lead.ownerName||'') : `${lead.firstName||''} ${lead.lastName||''}`.trim();
   const ref = await db.collection('tasks').add({
     text, due, priority, agentId, done:false,
-    ...(isCrossSell ? {crossSellId:leadId} : {leadId}), leadName,
+    ...(kind==='crosssell' ? {crossSellId:leadId} : kind==='anniversary' ? {anniversaryId:leadId} : {leadId}), leadName,
     type: 'lead-task',
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   });
@@ -6139,6 +6203,1181 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('main-app').style.display='none';
   setTimeout(initAuthGate, 200);
 });
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// ANNIVERSARY PIPELINE
+// Homeowners whose policy renewal is coming up (home-purchase/deed date is
+// the stand-in for the renewal date). One small pre-filtered batch is
+// imported from CSV each month and worked in weekly mail "waves".
+//
+// Lives in its own Firestore collection (`anniversaryLeads`), the same way
+// cross-sell opportunities do, so ~500 imported prospects a month never touch
+// the Leads list, New Leads KPIs, scoreboard or open-lead counts. When a lead
+// is marked Sold a normal Closed Won lead (source "Anniversary") is written to
+// `leads` so the scoreboard / customers keep working.
+//
+//   Stages ........ Mailed → Contacting → Conversation → Quoted → Sold
+//   Off-board ..... Not Now (shows in Remarketing, auto-resurfaces 60 days
+//                   before the NEXT anniversary), Archived (never contact)
+//   Cadence tasks . type:'anniversary-followup' in `tasks`, deterministic
+//                   doc ids (an_<leadId>_c<cycle>_<seqKey>) so re-runs from two
+//                   open browsers can never create duplicates
+// ══════════════════════════════════════════════════════════════════════
+DB.anniversaryLeads = DB.anniversaryLeads || [];
+
+const ANNIV_STAGES  = ['Mailed','Contacting','Conversation','Quoted','Sold'];
+const ANNIV_ACTIVE  = ['Mailed','Contacting','Conversation','Quoted'];
+const ANNIV_STAGE_COLORS = {Mailed:'#64748b',Contacting:'#f59e0b',Conversation:'#3b82f6',Quoted:'#8b5cf6',Sold:'#22c55e'};
+const ANNIV_STAGE_BG     = {Mailed:'#f1f5f9',Contacting:'#fef3c7',Conversation:'#dbeafe',Quoted:'#ede9fe',Sold:'#dcfce7'};
+const ANNIV_STAGE_REACHED_KEY = {Contacting:'contacting',Conversation:'conversation',Quoted:'quoted',Sold:'sold'};
+const ANNIV_SEGMENTS = {
+  'Coverage Review': {icon:'🛡️', fg:'#0f766e', bg:'#ccfbf1'},
+  'Umbrella':        {icon:'☂️', fg:'#4338ca', bg:'#e0e7ff'},
+  'Landlord':        {icon:'🏘️', fg:'#b45309', bg:'#fef3c7'},
+};
+const ANNIV_RESURFACE_DAYS = 60;
+const ANNIV_PHONE = '(817) 345-0155';
+const ANNIV_NOT_NOW_REASONS = ['Wants to wait / not now','Just renewed or locked in a rate','Happy with current agent','Will shop closer to renewal','Could not reach (cadence ended)','Other'];
+
+// ── DATE HELPERS (all local-time ISO strings, no UTC drift) ───────────
+function annivIso(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function annivToday(){ return annivIso(new Date()); }
+function annivParse(iso){ const [y,m,d]=iso.split('-').map(Number); return new Date(y,m-1,d); }
+function annivAddDays(iso,n){ const d=annivParse(iso); d.setDate(d.getDate()+n); return annivIso(d); }
+function annivDaysBetween(a,b){ return Math.round((annivParse(b)-annivParse(a))/86400000); }
+function annivBizDay(iso){ const w=annivParse(iso).getDay(); return w===6?annivAddDays(iso,2):w===0?annivAddDays(iso,1):iso; }
+// Weekdays in [from..to] days after `iso` (falls back to the next business day)
+function annivWeekdays(iso,from,to){
+  const out=[];
+  for(let k=from;k<=to;k++){ const d=annivAddDays(iso,k), w=annivParse(d).getDay(); if(w!==0&&w!==6) out.push(d); }
+  return out.length?out:[annivBizDay(annivAddDays(iso,from))];
+}
+function annivNextMonday(){ const d=new Date(); d.setHours(0,0,0,0); while(d.getDay()!==1) d.setDate(d.getDate()+1); return annivIso(d); }
+// Anniversary of a sale date in a given year (Feb 29 → Feb 28 in non-leap years)
+function annivInYear(saleISO,year){
+  const [,m,d]=saleISO.split('-').map(Number);
+  let dt=new Date(year,m-1,d);
+  if(dt.getMonth()!==m-1) dt=new Date(year,m,0);
+  return annivIso(dt);
+}
+function annivNextOnOrAfter(saleISO,refISO){
+  const y=Number(refISO.slice(0,4));
+  let c=annivInYear(saleISO,y);
+  if(c<refISO) c=annivInYear(saleISO,y+1);
+  return c;
+}
+function annivPretty(iso){ return iso?annivParse(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'; }
+function annivYearsOwned(saleISO){ return saleISO?Math.max(0,Math.floor(annivDaysBetween(saleISO,annivToday())/365.25)):0; }
+function annivMonthYY(iso){ const d=annivParse(iso); return d.toLocaleDateString('en-US',{month:'short'})+String(d.getFullYear()).slice(2); }
+function annivEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function annivHash(s){ let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h; }
+// The X-date after a Not Now: the anniversary one year AFTER the one being targeted
+function annivNextXDate(l){
+  const base=l.anniversaryDate||annivNextOnOrAfter(l.saleDate,annivToday());
+  return annivInYear(l.saleDate,Number(base.slice(0,4))+1);
+}
+
+// ── TEXT / CSV HELPERS ────────────────────────────────────────────────
+function annivTitle(s){
+  s=String(s||'').trim();
+  if(!s||s!==s.toUpperCase()) return s;
+  return s.toLowerCase().replace(/(^|[\s\-'(&.])([a-z])/g,(m,a,b)=>a+b.toUpperCase())
+    .replace(/\b(Llc|Lp|Ltd|Llp|Ii|Iii|Iv|Pllc)\b/g,x=>x.toUpperCase());
+}
+const ANNIV_BIZ_RE=/\b(LLC|INC|CORP|LTD|LP|LLP|TRUST|TR|PARTNERS|PARTNERSHIP|PROPERTIES|HOLDINGS|INVESTMENTS?|ENTERPRISES|COMPANY|CO|ESTATE|FAMILY|BANK|ASSOC\w*|REALTY|HOMES|CAPITAL|GROUP)\b/i;
+// Returns {ownerName, firstName, lastName}. fmt 'lastfirst' = appraisal-district style ("SMITH JOHN & JANE")
+function annivParseOwner(raw,fmt){
+  raw=String(raw||'').replace(/\s+/g,' ').trim();
+  if(!raw) return {ownerName:'',firstName:'',lastName:''};
+  if(ANNIV_BIZ_RE.test(raw)) return {ownerName:annivTitle(raw),firstName:'',lastName:annivTitle(raw)};
+  const parts=raw.split(/\s+(?:&|AND)\s+/i);
+  const tok=parts[0].split(' ');
+  if(fmt==='lastfirst' && tok.length>=2){
+    const last=tok[0], first=tok[1];
+    const coFirst=parts.slice(1).map(p=>p.split(' ')[0]);
+    const firsts=[first,...coFirst].map(annivTitle);
+    return {ownerName:firsts.join(' & ')+' '+annivTitle(last), firstName:annivTitle(first), lastName:annivTitle(last)};
+  }
+  return {ownerName:annivTitle(raw), firstName:annivTitle(tok[0]), lastName:annivTitle(tok.length>1?tok[tok.length-1]:'')};
+}
+function annivParseCSV(text){
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  const rows=[]; let row=[],cur='',q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; }
+    else if(c==='"') q=true;
+    else if(c===','){ row.push(cur); cur=''; }
+    else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n') i++; row.push(cur); cur=''; if(row.some(x=>x.trim()!=='')) rows.push(row); row=[]; }
+    else cur+=c;
+  }
+  row.push(cur); if(row.some(x=>x.trim()!=='')) rows.push(row);
+  return rows;
+}
+function annivCsvOut(rows){
+  return rows.map(r=>r.map(v=>{ v=String(v==null?'':v); return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(',')).join('\r\n');
+}
+function annivDownload(name,text){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8'}));
+  a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+}
+const ANNIV_COLS = {
+  owner:   ['ownername','owner','name','ownersname','ownername1'],
+  prop:    ['propertyaddress','siteaddress','situsaddress','situs','propaddress','property','address'],
+  mailAddr:['mailingaddress','mailaddress','mailaddr','mailingaddress1','mailingaddr'],
+  mailCity:['mailingcity','mailcity'],
+  mailState:['mailingstate','mailstate'],
+  mailZip: ['mailingzip','mailzip','mailingzipcode','mailzipcode','mailingpostalcode'],
+  phone:   ['phone','phonenumber','primaryphone','phone1','cell','cellphone'],
+  email:   ['email','emailaddress'],
+  sale:    ['saledate','deeddate','purchasedate','dateofsale','deedsaledate','dateofpurchase'],
+  value:   ['marketvalue','value','totalvalue','appraisedvalue','totalmarketvalue'],
+  segment: ['segmenttag','segment','segmentag','tag'],
+  batch:   ['batchtag','batch'],
+  tad:     ['tadaccount','tadaccountnumber','tadacct','tad','accountnumber','tadaccountno','account'],
+};
+function annivMapHeaders(header){
+  const norm=header.map(h=>String(h||'').toLowerCase().replace(/[^a-z0-9]/g,''));
+  const map={};
+  Object.keys(ANNIV_COLS).forEach(k=>{
+    const i=norm.findIndex(h=>ANNIV_COLS[k].includes(h));
+    if(i>=0) map[k]=i;
+  });
+  return map;
+}
+function annivParseDate(s){
+  s=String(s||'').trim(); let y,m,d,x;
+  if(x=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)){ y=+x[1]; m=+x[2]; d=+x[3]; }
+  else if(x=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)){ m=+x[1]; d=+x[2]; y=+x[3]; if(y<100) y+=(y>=50?1900:2000); }
+  else return null;
+  const dt=new Date(y,m-1,d);
+  if(dt.getFullYear()!==y||dt.getMonth()!==m-1||dt.getDate()!==d) return null;
+  return annivIso(dt);
+}
+function annivNum(s){ const n=Number(String(s||'').replace(/[$,\s]/g,'')); return isFinite(n)?n:0; }
+function annivPhone10(s){ let d=String(s||'').replace(/\D/g,''); if(d.length===11&&d[0]==='1') d=d.slice(1); return d.length===10?d:''; }
+function annivPhoneFmt(d10){ return d10?`(${d10.slice(0,3)}) ${d10.slice(3,6)}-${d10.slice(6)}`:''; }
+function annivAddrKey(a){
+  return String(a||'').toUpperCase().replace(/[.,#]/g,' ')
+    .replace(/\bSTREET\b/g,'ST').replace(/\bAVENUE\b/g,'AVE').replace(/\bDRIVE\b/g,'DR').replace(/\bROAD\b/g,'RD')
+    .replace(/\bLANE\b/g,'LN').replace(/\bCOURT\b/g,'CT').replace(/\bCIRCLE\b/g,'CIR').replace(/\bBOULEVARD\b/g,'BLVD')
+    .replace(/\bTRAIL\b/g,'TRL').replace(/\bPLACE\b/g,'PL').replace(/\bPARKWAY\b/g,'PKWY').replace(/\bHIGHWAY\b/g,'HWY')
+    .replace(/\bNORTH\b/g,'N').replace(/\bSOUTH\b/g,'S').replace(/\bEAST\b/g,'E').replace(/\bWEST\b/g,'W')
+    .replace(/\s+/g,' ').trim();
+}
+function annivTadKey(t){ return String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function annivSegment(s){
+  const v=String(s||'').toLowerCase().trim();
+  if(!v) return '';
+  if(v.startsWith('cover')||v.includes('review')) return 'Coverage Review';
+  if(v.startsWith('umb')) return 'Umbrella';
+  if(v.startsWith('land')) return 'Landlord';
+  return '';
+}
+// Mail-to block: mailing address if the CSV had one, otherwise the property address
+function annivMailBlock(l){
+  if(l.mailAddress) return {addr:l.mailAddress,city:l.mailCity||'',state:l.mailState||'',zip:l.mailZip||''};
+  return {addr:l.propertyAddress||'',city:'',state:'',zip:''};
+}
+function annivLeadById(id){ return (DB.anniversaryLeads||[]).find(x=>x.id===id); }
+function annivDisplayFirst(l){ return l.firstName||(l.ownerName||'').split(' ')[0]||'there'; }
+
+// ── SCRIPTS (call / email copy per segment, Weaver 3W style) ──────────
+// Placeholders: [Name] [Agent] [Address] [Years] [Value] [Month] [Number]
+const ANNIV_SCRIPTS = {
+  call1: { label:'Day 3–5 — First Call (reference the mailer)', type:'📞 Call Script', color:'#ef4444', seg:{
+'Coverage Review':`WHO
+"Hi [Name], this is [Agent] with Allen Insurance Agency. Did I catch you at an okay time?"
+
+WHY
+"We sent you a note in the mail last week about your home at [Address]. You've owned it about [Years] years, and a lot changes in that time — rebuild costs, roof age, the way carriers price Texas homes. Your renewal is coming up around [Month], so I'm reaching out to the homeowners nearby to make sure their coverage still fits."
+
+WHAT
+"I'd like to do a quick 10-minute policy review — no cost, no obligation. If I can save you money or close a coverage gap, great. If not, you'll know you're covered right."
+
+ASK
+• Who is your homeowners insurance with today?
+• When does it renew?
+• Do you have your declarations page handy, or can I get a copy by email/text?
+• When's the last time anyone reviewed your deductible and your wind/hail coverage?
+
+IF VOICEMAIL
+"Hi [Name], it's [Agent] with Allen Insurance Agency — I sent you a note about your home at [Address]. Your renewal is coming up and I'd love to do a free coverage check. Call or text me at [Number]. Thanks!"`,
+'Umbrella':`WHO
+"Hi [Name], this is [Agent] with Allen Insurance Agency. Did I catch you at an okay time?"
+
+WHY
+"We sent you a note in the mail last week about your home at [Address]. With a home valued around [Value], your liability exposure is bigger than most people realize — and your homeowners policy only goes so far if someone gets hurt on your property or you're in a serious accident. Your renewal is coming up around [Month], which is the perfect time to look at it."
+
+WHAT
+"I'd like to take 10 minutes to review your current liability limits and show you what an umbrella policy would add on top — it's often surprisingly affordable for the protection you get."
+
+ASK
+• Who are you with for home and auto, and when do they renew?
+• What are your current liability limits?
+• Do you have a pool, trampoline, teenage drivers or a dog? (all raise exposure)
+• Do you have an umbrella today?
+
+IF VOICEMAIL
+"Hi [Name], it's [Agent] with Allen Insurance Agency — I sent you a note about protecting your home at [Address] and your assets. Your renewal is coming up and I'd love to take a quick look at your liability limits. Call or text me at [Number]. Thanks!"`,
+'Landlord':`WHO
+"Hi [Name], this is [Agent] with Allen Insurance Agency. Did I catch you at an okay time?"
+
+WHY
+"We sent a note to your mailing address last week about your property at [Address]. I understand it's a rental. A lot of landlords are still on a regular homeowners policy or an old landlord policy that may not cover loss of rents or liability the way they expect. The renewal is coming up around [Month], so I'm reaching out to see if it's worth a second look."
+
+WHAT
+"I'd like to do a quick 10-minute review of your landlord coverage — dwelling, liability, and loss of rents — and compare it against what we can offer. No cost, no obligation."
+
+ASK
+• Who insures [Address] today, and when does it renew?
+• Is it a landlord (DP-3) policy or a regular homeowners policy?
+• Do you have loss-of-rents coverage if a tenant situation or a claim leaves it vacant?
+• Do you own any other rentals we should look at together?
+
+IF VOICEMAIL
+"Hi [Name], it's [Agent] with Allen Insurance Agency — I sent you a note about your rental property at [Address]. Your renewal is coming up and I'd love to do a free landlord-coverage check. Call or text me at [Number]. Thanks!"`
+  }},
+  call2: { label:'Day 7–10 — Second Call', type:'📞 Call Script', color:'#ef4444', seg:{
+'Coverage Review':`OPENING
+"Hi [Name], it's [Agent] with Allen Insurance Agency again — I tried you earlier this week about the home at [Address]. I also sent you a short email so you have my info."
+
+BRIDGE
+"I know you probably get a lot of mail and calls, so I'll be brief: your renewal is coming up in the next couple of months, and most homeowners who haven't re-shopped in a few years are surprised at what a quick review turns up."
+
+ASK
+"If I can get a copy of your current declarations page, I'll compare coverage and price side by side and get back to you within a day. Would you rather text me a photo of it, or email it?"
+
+IF THEY OBJECT
+• "I'm happy with my agent" → "Totally fair. A second set of eyes costs nothing — worst case you confirm you're in good shape."
+• "I just renewed" → "Good to know — what month was that? I'll make a note and check back before your next one."
+• "Send me something" → "Happy to. What's the best email? And what's your renewal month so I send the right thing?"
+
+IF VOICEMAIL
+"Hi [Name], [Agent] at Allen Insurance Agency following up on my note about your home. If you'll send me your dec page I'll do the comparison for you. [Number]. Thanks!"`,
+'Umbrella':`OPENING
+"Hi [Name], it's [Agent] with Allen Insurance Agency again — I tried you earlier this week about your home at [Address]. I also sent you a short email."
+
+BRIDGE
+"Quick reason for the call: with the value of your home, one serious claim could put more than your insurance limits at risk. Your renewal is coming up, which is the easiest time to add an umbrella."
+
+ASK
+"If I can see your current home and auto declarations pages, I can show you exactly how much extra protection an umbrella adds and what it would cost. Can you text or email me those?"
+
+IF THEY OBJECT
+• "I don't need it" → "Most people feel that way until they see what a lawsuit can cost. Can I show you the numbers? If it doesn't make sense, I'll tell you."
+• "Cost?" → "It depends on your limits and household, but it's usually a modest add-on. Give me 10 minutes and I'll give you a real number."
+• "I just renewed" → "Which month? I'll set a reminder and check back before your next renewal."
+
+IF VOICEMAIL
+"Hi [Name], [Agent] at Allen Insurance Agency following up on my note about protecting your home and assets. [Number]. Thanks!"`,
+'Landlord':`OPENING
+"Hi [Name], it's [Agent] with Allen Insurance Agency again — I tried you earlier this week about your rental at [Address]. I also sent you a short email."
+
+BRIDGE
+"I'll be brief: your renewal is coming up, and landlord policies are one of the easiest places to find gaps — loss of rents, liability limits, and whether the policy actually matches how the property is used."
+
+ASK
+"If I can get your current declarations page, I'll compare it against what we can offer and let you know within a day. Would you rather text a photo of it or email it?"
+
+IF THEY OBJECT
+• "I use another agent" → "No problem — a second look costs nothing, and I'll tell you honestly if what you have is good."
+• "Property manager handles it" → "Good to know. Do they carry the insurance or do you? Either way I can quote it so you can compare."
+• "I just renewed" → "What month? I'll note it and follow up before your next renewal."
+
+IF VOICEMAIL
+"Hi [Name], [Agent] at Allen Insurance Agency following up about your rental property. Send me your dec page and I'll do the comparison. [Number]. Thanks!"`
+  }},
+  email: { label:'Day 7–10 — Follow-Up Email (manual)', type:'📧 Email', color:'#3b82f6', seg:{
+'Coverage Review':`SUBJECT: Your home insurance renewal — quick coverage check
+
+Hi [Name],
+
+I'm [Agent] with Allen Insurance Agency. We sent you a note recently about your home at [Address], and I've tried to reach you by phone.
+
+You've owned your home about [Years] years, and your renewal is coming up around [Month]. A quick review can confirm your coverage still fits — and sometimes uncovers savings. It takes about 10 minutes and there's no obligation.
+
+If you reply with a photo or copy of your current declarations page, I'll compare it side by side and send you the results.
+
+[Agent]
+Allen Insurance Agency
+[Number]`,
+'Umbrella':`SUBJECT: Protecting your home and assets — quick liability check
+
+Hi [Name],
+
+I'm [Agent] with Allen Insurance Agency. We sent you a note recently about your home at [Address], and I've tried to reach you by phone.
+
+With your renewal coming up around [Month], it's a good time to look at your liability limits and whether an umbrella policy makes sense. It's often a surprisingly affordable way to add protection.
+
+If you reply with a copy of your current home and auto declarations pages, I'll show you exactly what an umbrella would add.
+
+[Agent]
+Allen Insurance Agency
+[Number]`,
+'Landlord':`SUBJECT: Your rental property insurance — quick coverage check
+
+Hi [Name],
+
+I'm [Agent] with Allen Insurance Agency. We sent a note recently about your rental property at [Address], and I've tried to reach you by phone.
+
+With your renewal coming up around [Month], I'd like to confirm your landlord coverage — dwelling, liability, and loss of rents — still fits. It takes about 10 minutes and there's no obligation.
+
+If you reply with a copy of your current declarations page, I'll compare it and send you the results.
+
+[Agent]
+Allen Insurance Agency
+[Number]`
+  }},
+  final: { label:'Day 21 — Final Call', type:'📞 Call Script', color:'#f59e0b', seg:{
+'*':`OPENING
+"Hi [Name], it's [Agent] with Allen Insurance Agency. I've reached out a few times about your home at [Address] and I don't want to keep bothering you — this will be my last call for now."
+
+CLOSE ATTEMPT
+"If you're still open to a quick coverage check before your renewal in [Month], I can do it in 10 minutes. If the timing isn't right, no problem."
+
+CAPTURE THE RENEWAL DATE (this is the most valuable part of the call)
+"Can I ask what month your policy renews, and who you're with today? I'll make a note and reach back out before your next renewal so you're not caught off guard."
+
+IF NOT NOW
+"Understood. I'll check back with you next year ahead of your renewal. If anything changes before then — a claim, a rate increase, a new car — call or text me at [Number]."
+
+[After this call: mark the lead Not Now in the pipeline. It will come back automatically about 60 days before the next anniversary.]
+
+IF VOICEMAIL
+"Hi [Name], [Agent] at Allen Insurance Agency — this will be my last call about your home insurance for now. If you ever want a second opinion, I'm at [Number]. I'll check back with you before next year's renewal. Take care!"`
+  }}
+};
+const ANNIV_MAILER2_ANGLE = {
+  'Coverage Review':'"What has changed since you bought your home?" — rebuild cost, roof age, wind/hail deductible',
+  'Umbrella':'"Is your home worth more than your liability limits?" — one lawsuit angle, pool/teen-driver exposure',
+  'Landlord':'"Is your rental really covered?" — loss of rents, liability, regular-homeowners-policy gap'
+};
+function annivScriptSeqKey(seq){ return {a_call1:'call1',a_call2:'call2',a_email:'email',a_final:'final'}[seq]||''; }
+function showAnnivScript(taskId){
+  const t=(DB.tasks||[]).find(x=>x.id===taskId); if(!t) return;
+  const key=annivScriptSeqKey(t.seqKey); const s=ANNIV_SCRIPTS[key]; if(!s) return;
+  const l=annivLeadById(t.anniversaryId)||{};
+  const seg=t.segment||l.segment||'Coverage Review';
+  const raw=s.seg[seg]||s.seg['*']||Object.values(s.seg)[0];
+  const agent=(getProducerName(t.agentId||l.agentId)||'').split(' ')[0]||'[Agent]';
+  const month=l.anniversaryDate?annivParse(l.anniversaryDate).toLocaleDateString('en-US',{month:'long'}):'[Month]';
+  const body=raw
+    .replace(/\[Name\]/g,annivDisplayFirst(l.ownerName?l:{ownerName:t.leadName}))
+    .replace(/\[Agent\]/g,agent).replace(/\[Number\]/g,ANNIV_PHONE)
+    .replace(/\[Address\]/g,l.propertyAddress||'[Address]')
+    .replace(/\[Years\]/g,l.saleDate?String(annivYearsOwned(l.saleDate)):'[Years]')
+    .replace(/\[Value\]/g,l.marketValue?fmt$(Math.round(l.marketValue/1000)*1000):'[Value]')
+    .replace(/\[Month\]/g,month);
+  const sg=ANNIV_SEGMENTS[seg]||{fg:'#475569',bg:'#f1f5f9',icon:''};
+  annivShowModal(`<div class="modal-title">${s.type} — ${s.label}</div>
+    <div style="background:#f8fafc;border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0"></div>
+      <span style="font-size:12px;font-weight:600">${annivEsc(t.leadName||l.ownerName||'')}</span>
+      <span style="background:${sg.bg};color:${sg.fg};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">${sg.icon} ${annivEsc(seg)}</span>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('anniv-script-body').textContent).then(()=>toast('Script copied!'))"
+        style="margin-left:auto;background:var(--teal);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;font-weight:600">📋 Copy Script</button>
+    </div>
+    <div id="anniv-script-body" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px;max-height:60vh;overflow-y:auto">
+      <pre style="margin:0;font-family:inherit;font-size:13px;color:var(--text);white-space:pre-wrap;line-height:1.7">${annivEsc(body)}</pre>
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`);
+}
+function annivShowModal(html,width){
+  document.getElementById('overlay').style.display='flex';
+  const m=document.querySelector('#overlay .modal'); if(m) m.style.width=width?width+'px':'';
+  document.getElementById('modal-content').innerHTML=html;
+}
+
+// ── CADENCE TASKS ─────────────────────────────────────────────────────
+// Day 0 mailer · Day 3–5 first call · Day 7–10 second call + email ·
+// Day 14 second mailer · Day 21 final call. Mailers are ONE task per wave
+// (not one per lead); calls/emails are per lead, spread across the window's
+// weekdays so a 125-lead wave never lands on one producer in one day.
+function annivBuildCadenceTasks(id,rec,opts){
+  opts=opts||{};
+  const out=[], M=rec.mailDate, i=rec.idx||0, cyc=rec.cycle||1, nm=rec.ownerName, seg=rec.segment;
+  const base={agentId:rec.agentId||'',done:false,anniversaryId:id,leadName:nm,segment:seg,batch:rec.batch,cycle:cyc,line:'Home',
+              type:'anniversary-followup',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  const add=(seqKey,day,due,priority,taskType,text)=>out.push({id:`an_${id}_c${cyc}_${seqKey}`,data:{...base,seqKey,sequenceDay:day,due,priority,taskType,text}});
+  if(opts.perLeadMailers){
+    add('a_mail1',0,M,'high','mailer',`📬 Day 0 — Mail anniversary mailer to ${nm} (${seg})`);
+    add('a_mail2',14,annivAddDays(M,14),'medium','mailer',`📬 Day 14 — Send 2nd mailer (new angle) to ${nm} if still no conversation. Angle: ${ANNIV_MAILER2_ANGLE[seg]||''}`);
+  }
+  const pool1=annivWeekdays(M,3,5), pool2=annivWeekdays(M,7,10);
+  const due1=pool1[i%pool1.length], due2=pool2[i%pool2.length];
+  if(rec.phone){
+    add('a_call1',3,due1,'high','call',`📞 Day 3–5 — First call: ${nm} (${seg}). Reference the mailer; ask when their home policy renews.`);
+    add('a_call2',7,due2,'high','call',`📞 Day 7–10 — Second call: ${nm} (${seg}).${rec.email?' Send the follow-up email too.':''}`);
+    add('a_final',21,annivBizDay(annivAddDays(M,21)),'medium','call',`📞 Day 21 — Final call: ${nm} (${seg}). Last attempt; capture their renewal month, then mark Not Now if not quoted.`);
+  }
+  if(rec.email) add('a_email',7,due2,'medium','email',`📧 Day 7–10 — Email ${nm} (${seg}): follow up on the mailer and calls.`);
+  return out;
+}
+function annivWaveMailerTasks(batch,wave,mailDate,leads,agentId){
+  const slug=String(batch).replace(/[^A-Za-z0-9]/g,'');
+  const by=s=>leads.filter(l=>l.segment===s).length;
+  const mix=Object.keys(ANNIV_SEGMENTS).map(s=>`${s} ${by(s)}`).join(' · ');
+  const base={agentId:agentId||'',done:false,type:'anniversary-followup',taskType:'mailer',batch,wave,line:'Home',leadName:'',
+              createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  const angles=Object.keys(ANNIV_SEGMENTS).map(s=>`${s}: ${ANNIV_MAILER2_ANGLE[s]}`).join(' | ');
+  return [
+    {id:`anm_${slug}_w${wave}_1`,data:{...base,seqKey:'a_mail1',sequenceDay:0,due:mailDate,priority:'high',
+      text:`📬 Day 0 — Mail ${batch} Wave ${wave} (${leads.length} pieces: ${mix}). Use Pipeline → Anniversary → 📬 Mailer List to export addresses.`}},
+    {id:`anm_${slug}_w${wave}_2`,data:{...base,seqKey:'a_mail2',sequenceDay:14,due:annivAddDays(mailDate,14),priority:'medium',
+      text:`📬 Day 14 — Mail ${batch} Wave ${wave} second mailer (new angle) to leads still in play. Export "Mailer 2" from the Mailer List. Angles — ${angles}`}},
+  ];
+}
+
+// ── CSV IMPORT ────────────────────────────────────────────────────────
+function annivOpenImport(){
+  const d60=annivAddDays(annivToday(),ANNIV_RESURFACE_DAYS);
+  const defBatch='Anniv-'+annivParse(d60).toLocaleDateString('en-US',{month:'short'})+String(annivParse(d60).getFullYear()).slice(2);
+  window._annivCsvText=null;
+  annivShowModal(`<div class="modal-title">📥 Import Anniversary Batch</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+      Columns used: owner name, property address, mailing address / city / state / ZIP, phone, email, sale date, market value, segment tag, TAD account #. Rows are split into weekly mail waves, soonest anniversary first.</div>
+    <div class="form-group"><label class="form-label">CSV file *</label><input type="file" id="ai-file" accept=".csv,text/csv" onchange="annivImportFileChosen(this)"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Batch tag *</label><input class="form-input" id="ai-batch" value="${defBatch}"></div>
+      <div class="form-group"><label class="form-label">Split into weekly waves</label>
+        <div style="display:flex;gap:6px"><select class="form-input" id="ai-wmode" style="flex:1.4" onchange="annivWaveModeChanged()"><option value="size">Leads per wave</option><option value="count">Number of waves</option><option value="custom">Custom sizes</option></select>
+        <input class="form-input" id="ai-wave" style="flex:1" value="125" oninput="annivOptChanged()"></div>
+        <div id="ai-whint" style="font-size:11px;color:var(--muted);margin-top:3px">Each wave mails one week after the previous one.</div></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Wave 1 mail date (Day 0)</label><input class="form-input" id="ai-mail" type="date" value="${annivNextMonday()}"></div>
+      <div class="form-group"><label class="form-label">Owner name format</label><select class="form-input" id="ai-fmt"><option value="asis">First Last (as written)</option><option value="lastfirst">LAST FIRST (appraisal style)</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Assign leads to</label><select class="form-input" id="ai-split"><option value="all">Split evenly between all producers</option>${DB.producers.map(p=>`<option value="${p.id}">${annivEsc(p.name)} only</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Mailer tasks assigned to</label><select class="form-input" id="ai-mailer">${DB.producers.map(p=>`<option value="${p.id}">${annivEsc(p.name)}</option>`).join('')}</select></div>
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px"><input type="checkbox" id="ai-skipwin"> Skip rows whose anniversary isn't 20–100 days after their mail date</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px"><input type="checkbox" id="ai-name"> Also import "possible duplicates" matched by name only (no phone / TAD / address match)</label>
+    <div id="ai-out" style="margin-top:12px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-ghost" id="ai-prev" onclick="annivImportPreview()">Preview</button>
+      <button class="btn btn-primary" id="ai-go" onclick="annivImportCommit()">Import</button>
+    </div>`,760);
+}
+function annivImportFileChosen(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ window._annivCsvText=String(r.result||''); annivImportPreview(); };
+  r.readAsText(f);
+}
+// Wave sizing: "size" = N leads per wave, "count" = split evenly into N waves,
+// "custom" = explicit sizes like "100, 150, 125" (any leftover leads become one extra final wave)
+function annivWaveSizes(total,o){
+  total=Math.max(0,total);
+  if(!total) return {sizes:[],note:''};
+  const ints=String(o.waveInput||'').split(/[\s,;]+/).map(s=>parseInt(s,10)).filter(n=>n>0);
+  let sizes=[],note='';
+  if(o.waveMode==='count'){
+    const n=Math.min(Math.max(ints[0]||1,1),total), base=Math.floor(total/n), rem=total%n;
+    for(let i=0;i<n;i++) sizes.push(base+(i<rem?1:0));
+  } else if(o.waveMode==='custom'){
+    sizes=ints.slice();
+    if(!sizes.length) sizes=[total];
+    let sum=0, kept=[];
+    for(const s of sizes){ if(sum>=total) break; kept.push(Math.min(s,total-sum)); sum+=kept[kept.length-1]; }
+    sizes=kept;
+    if(sum<total){ sizes.push(total-sum); note=`Your sizes add up to ${sum}, so the remaining ${total-sum} lead(s) were put in one extra final wave.`; }
+    else if(ints.reduce((a,b)=>a+b,0)>total) note=`Your sizes add up to ${ints.reduce((a,b)=>a+b,0)} but only ${total} leads are importing — the last wave(s) were trimmed.`;
+  } else {
+    const n=Math.max(ints[0]||125,1);
+    for(let left=total;left>0;left-=n) sizes.push(Math.min(n,left));
+  }
+  return {sizes,note};
+}
+function annivWaveOf(i,sizes){ let c=0; for(let w=0;w<sizes.length;w++){ c+=sizes[w]; if(i<c) return w+1; } return sizes.length||1; }
+function annivWaveModeChanged(){
+  const m=document.getElementById('ai-wmode').value, inp=document.getElementById('ai-wave'), h=document.getElementById('ai-whint');
+  if(m==='size'){ inp.value='125'; h.textContent='Leads in each wave (the last wave gets whatever is left). Each wave mails one week after the previous one.'; }
+  else if(m==='count'){ inp.value='4'; h.textContent='Number of waves — leads are split as evenly as possible. Each wave mails one week after the previous one.'; }
+  else { inp.value='100, 150, 125, 125'; h.textContent='Size of each wave in order, separated by commas. Leftover leads go in one extra final wave.'; }
+  annivOptChanged();
+}
+function annivOptChanged(){ if(window._annivCsvText) annivImportPreview(); }
+function annivReadOpts(){
+  const g=id=>document.getElementById(id);
+  const producers=DB.producers.map(p=>p.id);
+  return {
+    batch:(g('ai-batch').value||'').trim(),
+    waveMode:g('ai-wmode').value,waveInput:g('ai-wave').value,
+    mailDate:g('ai-mail').value||annivNextMonday(),
+    fmt:g('ai-fmt').value,
+    split:g('ai-split').value,
+    mailer:g('ai-mailer').value,
+    skipWindow:g('ai-skipwin').checked,
+    includeNameMatches:g('ai-name').checked,
+    producers,
+  };
+}
+// Build the full import plan (parse → validate → dedupe → waves). Pure: no writes.
+function annivBuildPlan(){
+  const o=annivReadOpts(), text=window._annivCsvText;
+  if(!text) return {error:'Choose a CSV file first.'};
+  if(!o.batch) return {error:'Enter a batch tag.'};
+  const table=annivParseCSV(text);
+  if(table.length<2) return {error:'The file has no data rows.'};
+  const map=annivMapHeaders(table[0]);
+  const missing=[['owner','Owner name'],['prop','Property address'],['sale','Sale date'],['segment','Segment tag']].filter(([k])=>map[k]===undefined).map(x=>x[1]);
+  if(missing.length) return {error:`Missing required column(s): ${missing.join(', ')}. Columns found: ${table[0].join(', ')}`};
+  const cell=(r,k)=>map[k]===undefined?'':String(r[map[k]]||'').trim();
+
+  // ── indexes of everything already in the CRM ──
+  const tadIdx=new Map(), addrIdx=new Map(), phoneIdx=new Map(), nameIdx=new Map();
+  (DB.anniversaryLeads||[]).forEach(a=>{
+    const lbl=`Anniversary pipeline — ${a.ownerName} (${a.batch}, ${a.stage})`;
+    if(a.tadAccount) tadIdx.set(annivTadKey(a.tadAccount),{label:lbl,where:'Anniversary'});
+    if(a.propertyAddress) addrIdx.set(annivAddrKey(a.propertyAddress),{label:lbl,where:'Anniversary'});
+    const p=annivPhone10(a.phone); if(p) phoneIdx.set(p,{label:lbl,where:'Anniversary'});
+  });
+  DB.leads.forEach(l=>{
+    const where=l.status==='Closed Won'?'Customers':(l.leadType==='Life Insurance'?'Life pipeline':l.leadType==='Commercial'?'Commercial pipeline':['Closed Lost','Customer Left','Quote Not Closed','Uncontacted'].includes(l.status)?'Remarketing':'Personal Lines pipeline');
+    const lbl=`${where} — ${l.firstName||''} ${l.lastName||''} (${l.status})`.replace(/\s+/g,' ');
+    const p=annivPhone10(l.phone); if(p&&!phoneIdx.has(p)) phoneIdx.set(p,{label:lbl,where});
+    const ln=String(l.lastName||'').toLowerCase().trim(), fn=String(l.firstName||'').toLowerCase().trim();
+    if(ln&&fn){ if(!nameIdx.has(ln)) nameIdx.set(ln,[]); nameIdx.get(ln).push({fn,label:lbl,where}); }
+  });
+  (DB.crosssells||[]).forEach(c=>{
+    const parts=String(c.customerName||'').toLowerCase().trim().split(/\s+/);
+    if(parts.length<2) return;
+    const ln=parts[parts.length-1], fn=parts[0], lbl=`Cross-Sell — ${c.customerName} (${c.status})`;
+    if(!nameIdx.has(ln)) nameIdx.set(ln,[]); nameIdx.get(ln).push({fn,label:lbl,where:'Cross-Sell'});
+  });
+
+  const seenTad=new Map(), seenAddr=new Map();
+  const accepted=[], skipped=[], rejected=[];
+  const warn={outOfWindow:0,noPhone:0,noEmail:0,multiBatch:0};
+  const csvBatches=new Set();
+  for(let ri=1;ri<table.length;ri++){
+    const r=table[ri], rowNo=ri+1;
+    const raw={owner:cell(r,'owner'),prop:cell(r,'prop'),tad:cell(r,'tad'),line:rowNo};
+    const reject=why=>rejected.push({...raw,reason:why});
+    if(map.batch!==undefined&&cell(r,'batch')) csvBatches.add(cell(r,'batch'));
+    if(!raw.owner) { reject('Missing owner name'); continue; }
+    if(!raw.prop)  { reject('Missing property address'); continue; }
+    const saleDate=annivParseDate(cell(r,'sale'));
+    if(!saleDate)  { reject(`Unreadable sale date "${cell(r,'sale')}"`); continue; }
+    const segment=annivSegment(cell(r,'segment'));
+    if(!segment)   { reject(`Unknown segment tag "${cell(r,'segment')}" (use Coverage Review, Umbrella or Landlord)`); continue; }
+    const owner=annivParseOwner(raw.owner,o.fmt);
+    const phone10=annivPhone10(cell(r,'phone'));
+    const emailRaw=cell(r,'email').toLowerCase();
+    const email=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)?emailRaw:'';
+    const tadKey=annivTadKey(raw.tad), addrKey=annivAddrKey(raw.prop);
+
+    // ── dedupe (TAD # first, property address fallback), then phone / name ──
+    let dup=null;
+    if(tadKey){
+      dup=tadIdx.get(tadKey)||null; if(dup) dup={...dup,kind:'TAD account #'};
+      if(!dup&&seenTad.has(tadKey)) dup={label:`Duplicate row ${seenTad.get(tadKey)} in this file`,where:'This file',kind:'TAD account #'};
+    }
+    if(!dup){
+      dup=addrIdx.get(addrKey)||null; if(dup) dup={...dup,kind:'Property address'};
+      if(!dup&&seenAddr.has(addrKey)) dup={label:`Duplicate row ${seenAddr.get(addrKey)} in this file`,where:'This file',kind:'Property address'};
+    }
+    if(!dup&&phone10&&phoneIdx.has(phone10)) dup={...phoneIdx.get(phone10),kind:'Phone number'};
+    if(!dup&&!o.includeNameMatches){
+      const toks=new Set(String(raw.owner).toLowerCase().replace(/[^a-z\s]/g,' ').split(/\s+/).filter(Boolean));
+      for(const t of toks){
+        const hit=(nameIdx.get(t)||[]).find(e=>e.fn!==t&&toks.has(e.fn));
+        if(hit){ dup={...hit,kind:'Name only (possible duplicate)'}; break; }
+      }
+    }
+    if(dup){ skipped.push({...raw,reason:dup.kind,matched:dup.label,where:dup.where}); continue; }
+    if(tadKey) seenTad.set(tadKey,rowNo);
+    seenAddr.set(addrKey,rowNo);
+
+    accepted.push({
+      ownerName:owner.ownerName,firstName:owner.firstName,lastName:owner.lastName,
+      propertyAddress:raw.prop,mailAddress:cell(r,'mailAddr'),mailCity:cell(r,'mailCity'),mailState:cell(r,'mailState').toUpperCase(),
+      mailZip:cell(r,'mailZip').replace(/\D/g,'').slice(0,5),
+      phone:annivPhoneFmt(phone10),email,saleDate,marketValue:annivNum(cell(r,'value')),segment,
+      tadAccount:raw.tad,_rowNo:rowNo,
+    });
+  }
+  if(csvBatches.size>1) warn.multiBatch=csvBatches.size;
+
+  // ── waves: soonest anniversary first, weekly mail drops ──
+  accepted.forEach(a=>{ a.anniversaryDate=annivNextOnOrAfter(a.saleDate,o.mailDate); });
+  accepted.sort((a,b)=>a.anniversaryDate.localeCompare(b.anniversaryDate)||a._rowNo-b._rowNo);
+  const sizes1=annivWaveSizes(accepted.length,o).sizes;
+  let finalList=[];
+  accepted.forEach((a,i)=>{
+    const wave=annivWaveOf(i,sizes1);
+    a.wave=wave; a.mailDate=annivAddDays(o.mailDate,7*(wave-1));
+    const gap=annivDaysBetween(a.mailDate,a.anniversaryDate);
+    a.outOfWindow=gap<20||gap>100;
+    if(a.outOfWindow){
+      warn.outOfWindow++;
+      if(o.skipWindow){ rejected.push({owner:a.ownerName,prop:a.propertyAddress,tad:a.tadAccount,line:a._rowNo,reason:`Anniversary ${gap} days after mail date (outside 20–100)`}); return; }
+    }
+    finalList.push(a);
+  });
+  // re-wave after any window skips so waves stay full
+  const ws2=annivWaveSizes(finalList.length,o), sizes2=ws2.sizes; warn.waveNote=ws2.note;
+  const idxCount={};
+  finalList.forEach((a,i)=>{
+    a.wave=annivWaveOf(i,sizes2); a.mailDate=annivAddDays(o.mailDate,7*(a.wave-1));
+    a.agentId=o.split==='all'?(o.producers[i%o.producers.length]||''):o.split;
+    // index within this wave AND producer, so each producer's calls spread across every day of the window
+    const ck=a.wave+'|'+a.agentId; a.idx=(idxCount[ck]=(idxCount[ck]||0)+1)-1;
+    if(!a.phone) warn.noPhone++; if(!a.email) warn.noEmail++;
+    a.batch=o.batch; a.stage='Mailed'; a.cycle=1; a.reached={}; a.history=[]; a.notes='';
+    a.cadenceEnd=annivBizDay(annivAddDays(a.mailDate,21));
+    delete a._rowNo; delete a.outOfWindow;
+  });
+  return {opts:o,accepted:finalList,skipped,rejected,warn,totalRows:table.length-1};
+}
+function annivImportPreview(){
+  window._annivConfirmSig=null; const goB=document.getElementById('ai-go'); if(goB) goB.textContent='Import';
+  const out=document.getElementById('ai-out'); if(!out) return;
+  let plan;
+  try{ plan=annivBuildPlan(); }catch(e){ out.innerHTML=`<div style="color:#b91c1c;font-size:13px">Could not read the file: ${annivEsc(e.message)}</div>`; return; }
+  window._annivPlan=plan;
+  if(plan.error){ out.innerHTML=`<div style="color:#b91c1c;font-size:13px">${annivEsc(plan.error)}</div>`; return; }
+  const waves={};
+  plan.accepted.forEach(a=>{ (waves[a.wave]=waves[a.wave]||{n:0,mail:a.mailDate,seg:{}}).n++; waves[a.wave].seg[a.segment]=(waves[a.wave].seg[a.segment]||0)+1; });
+  const chip=(n,label,bg,fg)=>`<div style="flex:1;min-width:110px;background:${bg};color:${fg};border-radius:8px;padding:8px 10px"><div style="font-size:20px;font-weight:700">${n}</div><div style="font-size:11px">${label}</div></div>`;
+  const list=(rows,cols,max)=>rows.length?`<div style="max-height:150px;overflow:auto;border:1px solid var(--border);border-radius:6px;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:11px">${rows.slice(0,max).map(r=>`<tr>${cols(r).map(c=>`<td style="padding:4px 6px;border-bottom:1px solid var(--border)">${annivEsc(c)}</td>`).join('')}</tr>`).join('')}</table></div>${rows.length>max?`<div style="font-size:11px;color:var(--muted)">…and ${rows.length-max} more (download for the full list)</div>`:''}`:'';
+  out.innerHTML=`
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      ${chip(plan.totalRows,'rows in file','#f1f5f9','#334155')}
+      ${chip(plan.accepted.length,'ready to import','#dcfce7','#166534')}
+      ${chip(plan.skipped.length,'duplicates skipped','#fef3c7','#92400e')}
+      ${chip(plan.rejected.length,'rejected / invalid','#fee2e2','#991b1b')}
+    </div>
+    ${plan.accepted.length?`<div style="font-size:12px;margin-bottom:8px"><b>Waves:</b> ${Object.keys(waves).map(w=>`Wave ${w}: ${waves[w].n} leads, mails ${fmtDate(waves[w].mail)}`).join(' &nbsp;·&nbsp; ')}</div>`:''}
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
+      ${plan.warn.outOfWindow?`⚠️ ${plan.warn.outOfWindow} row(s) have an anniversary outside the 20–100 day window${plan.opts.skipWindow?' (skipped)':' (still imported)'}. `:''}
+      ${plan.warn.noPhone?`${plan.warn.noPhone} with no valid phone (no call tasks — mail only). `:''}
+      ${plan.warn.noEmail?`${plan.warn.noEmail} with no email (no email task). `:''}
+      ${plan.warn.waveNote?`ℹ️ ${annivEsc(plan.warn.waveNote)} `:''}
+      ${plan.warn.multiBatch?`⚠️ File contains ${plan.warn.multiBatch} different batch tags — your Batch tag above is used for all rows.`:''}
+    </div>
+    ${plan.skipped.length?`<details open><summary style="cursor:pointer;font-size:12px;font-weight:600">Skipped duplicates (${plan.skipped.length}) <button class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="event.preventDefault();annivDownloadSkipped()">⬇ Download CSV</button></summary>
+      ${list(plan.skipped,r=>[r.owner,r.prop,r.reason,r.matched],60)}</details>`:''}
+    ${plan.rejected.length?`<details><summary style="cursor:pointer;font-size:12px;font-weight:600;margin-top:6px">Rejected rows (${plan.rejected.length})</summary>
+      ${list(plan.rejected,r=>['Row '+r.line,r.owner,r.reason],60)}</details>`:''}`;
+}
+function annivDownloadSkipped(){
+  const p=window._annivPlan; if(!p||p.error) return;
+  const rows=[['Owner','Property Address','TAD Account','Match Type','Matched Record','Found In']];
+  p.skipped.forEach(s=>rows.push([s.owner,s.prop,s.tad,s.reason,s.matched,s.where]));
+  p.rejected.forEach(s=>rows.push([s.owner,s.prop,s.tad,'REJECTED',s.reason,'Row '+s.line]));
+  annivDownload(`${p.opts.batch}-skipped.csv`,annivCsvOut(rows));
+}
+async function annivImportCommit(){
+  const out=document.getElementById('ai-out');
+  let plan; try{ plan=annivBuildPlan(); }catch(e){ alert('Could not read the file: '+e.message); return; }
+  if(plan.error){ alert(plan.error); return; }
+  if(!plan.accepted.length){ alert('Nothing to import — every row was skipped or rejected.'); return; }
+  const o=plan.opts;
+  // Two-step confirm on the button itself (native confirm() dialogs are blocked in some embedded browsers)
+  const goBtn=document.getElementById('ai-go');
+  const sig=`${o.batch}|${plan.accepted.length}|${o.waveMode}:${o.waveInput}|${o.mailDate}|${o.split}`;
+  if(window._annivConfirmSig!==sig){
+    window._annivConfirmSig=sig;
+    const exists=(DB.anniversaryLeads||[]).some(a=>a.batch===o.batch);
+    goBtn.textContent=`✔ Confirm: import ${plan.accepted.length} leads`;
+    if(out) out.insertAdjacentHTML('afterbegin',`<div style="background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px">Ready to import <b>${plan.accepted.length}</b> leads as batch <b>${annivEsc(o.batch)}</b> in ${new Set(plan.accepted.map(a=>a.wave)).size} weekly wave(s); ${plan.skipped.length} duplicate(s) skipped.${exists?` <b>Batch "${annivEsc(o.batch)}" already exists — these will be added to it.</b>`:''} Click the button again to confirm.</div>`);
+    return;
+  }
+  window._annivConfirmSig=null;
+  document.getElementById('ai-go').disabled=true; document.getElementById('ai-prev').disabled=true;
+  const say=m=>{ if(out) out.innerHTML=`<div style="font-size:13px;font-weight:600;color:var(--teal)">${m}</div>`; };
+  try{
+    let batch=db.batch(), ops=0, written=0;
+    const flush=async()=>{ if(ops){ await batch.commit(); batch=db.batch(); ops=0; } };
+    const stamp=firebase.firestore.FieldValue.serverTimestamp();
+    for(const rec of plan.accepted){
+      const ref=db.collection('anniversaryLeads').doc();
+      const tasks=annivBuildCadenceTasks(ref.id,rec,{});
+      if(ops+1+tasks.length>450) await flush();
+      batch.set(ref,{...rec,createdAt:stamp}); ops++;
+      tasks.forEach(t=>{ batch.set(db.collection('tasks').doc(t.id),t.data); ops++; });
+      written++;
+      if(written%50===0) say(`Importing… ${written} / ${plan.accepted.length}`);
+    }
+    const waves=[...new Set(plan.accepted.map(a=>a.wave))];
+    for(const w of waves){
+      const group=plan.accepted.filter(a=>a.wave===w);
+      for(const t of annivWaveMailerTasks(o.batch,w,group[0].mailDate,group,o.mailer)){
+        if(ops+1>450) await flush();
+        batch.set(db.collection('tasks').doc(t.id),t.data); ops++;
+      }
+    }
+    await flush();
+    toast(`✅ ${plan.accepted.length} leads imported (${o.batch})`);
+    closeModal();
+    logActivity('🎯','#fef3c7',`Anniversary batch <b>${annivEsc(o.batch)}</b> imported — ${plan.accepted.length} leads in ${waves.length} weekly wave(s), ${plan.skipped.length} duplicate(s) skipped`).catch(()=>{});
+  }catch(e){
+    console.error('Anniversary import failed:',e);
+    say(`<span style="color:#b91c1c">Import stopped: ${annivEsc(e.message)}.<br>Some leads may already be written — use 🗑 Delete Batch on "${annivEsc(o.batch)}" to clear them, then try again.</span>`);
+    document.getElementById('ai-go').disabled=false; document.getElementById('ai-prev').disabled=false;
+  }
+}
+
+// ── BOARD ─────────────────────────────────────────────────────────────
+let annivFilters={batch:'',segment:'',wave:'',showUnmailed:false};
+function annivSetFilter(k,v){ annivFilters[k]=v; renderAnniversaryBoard(); if(typeof applyPipelineSearch==='function') applyPipelineSearch(); }
+function annivCardHtml(l,today){
+  const seg=ANNIV_SEGMENTS[l.segment]||{icon:'',fg:'#475569',bg:'#f1f5f9'};
+  const du=l.anniversaryDate?daysUntil(l.anniversaryDate):null;
+  const unmailed=l.stage==='Mailed'&&l.mailDate>today;
+  const addr=l.segment==='Landlord'&&l.mailAddress?`✉️ ${annivEsc(l.mailAddress)}${l.mailCity?', '+annivEsc(l.mailCity):''}`:`📍 ${annivEsc(l.propertyAddress)}`;
+  return `<div class="deal-card" style="border-left-color:${ANNIV_STAGE_COLORS[l.stage]}" onclick="annivOpenLead('${l.id}')">
+    <div style="font-size:13px;font-weight:600;margin-bottom:3px">${annivEsc(l.ownerName)}</div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">
+      <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${seg.bg};color:${seg.fg}">${seg.icon} ${annivEsc(l.segment)}</span>
+      <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:#f1f5f9;color:#475569">${annivEsc(l.batch)}${l.wave?' · W'+l.wave:''}</span>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${annivEsc(l.propertyAddress)}">${addr}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${du!=null?`Renews ~${annivPretty(l.anniversaryDate)} (${du}d)`:''}${unmailed?` · mails ${annivPretty(l.mailDate)}`:''}${l.stage==='Quoted'&&l.quotePremium?` · ${fmt$(l.quotePremium)}`:''}${l.stage==='Sold'&&l.soldPremium?` · ${fmt$(l.soldPremium)}`:''}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:11px;font-weight:600;color:var(--teal)">${l.marketValue?fmt$(l.marketValue):''}</span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
+        ${l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('annivTask',DB.anniversaryLeads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>`:''}
+        ${l.stage==='Quoted'
+          ?`<button class="btn btn-primary btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenSold('${l.id}')" title="We sold it">✓ Sold</button>
+        <button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenQNC('${l.id}')" title="Quote Not Closed — send to Remarketing">✕ QNC</button>`
+          :l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();annivOpenNotNow('${l.id}')" title="Not Now — resurface before next anniversary">⏸</button>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+function renderAnniversaryBoard(){
+  const host=document.getElementById('pipeline-anniversary'); if(!host) return;
+  const af=(document.getElementById('pipeline-filter')||{}).value||'';
+  const today=annivToday();
+  const all=DB.anniversaryLeads||[];
+  const f=annivFilters;
+  // filter dropdowns
+  const batches=[...new Set(all.map(l=>l.batch).filter(Boolean))].sort().reverse();
+  const waves=[...new Set(all.filter(l=>!f.batch||l.batch===f.batch).map(l=>l.wave).filter(Boolean))].sort((a,b)=>a-b);
+  const setSel=(id,html,val)=>{ const el=document.getElementById(id); if(el){ el.innerHTML=html; el.value=val; } };
+  setSel('anniv-f-batch','<option value="">All batches</option>'+batches.map(b=>`<option>${annivEsc(b)}</option>`).join(''),f.batch);
+  setSel('anniv-f-seg','<option value="">All segments</option>'+Object.keys(ANNIV_SEGMENTS).map(s=>`<option>${s}</option>`).join(''),f.segment);
+  setSel('anniv-f-wave','<option value="">All waves</option>'+waves.map(w=>`<option value="${w}">Wave ${w}</option>`).join(''),f.wave);
+  const cb=document.getElementById('anniv-f-unmailed'); if(cb) cb.checked=f.showUnmailed;
+
+  let list=all.filter(l=>ANNIV_STAGES.includes(l.stage)&&(!af||l.agentId===af)
+    &&(!f.batch||l.batch===f.batch)&&(!f.segment||l.segment===f.segment)&&(!f.wave||String(l.wave)===f.wave));
+  const hiddenUnmailed=list.filter(l=>l.stage==='Mailed'&&l.mailDate>today).length;
+  if(!f.showUnmailed) list=list.filter(l=>!(l.stage==='Mailed'&&l.mailDate>today));
+  // Sold column: recent only unless a batch is selected
+  const cutoff=annivAddDays(today,-45);
+  list=list.filter(l=>l.stage!=='Sold'||f.batch||(l.soldDate||'9')>=cutoff);
+
+  const activeCount=list.filter(l=>l.stage!=='Sold').length;
+  const tc=(id,t)=>{ const el=document.getElementById(id); if(el) el.textContent=t; };
+  tc('ptab-anniversary-count',all.filter(l=>ANNIV_ACTIVE.includes(l.stage)).length);
+  tc('ps-anniversary-count',activeCount+' active'+(hiddenUnmailed&&!f.showUnmailed?` (+${hiddenUnmailed} not yet mailed)`:''));
+  tc('ps-anniversary-total',fmt$(list.filter(l=>l.stage==='Sold').reduce((s,l)=>s+Number(l.soldPremium||0),0))+' sold');
+
+  host.innerHTML=ANNIV_STAGES.map(stage=>{
+    const sl=list.filter(l=>l.stage===stage).sort((a,b)=>(a.anniversaryDate||'').localeCompare(b.anniversaryDate||''));
+    return `<div class="p-col">
+      <div class="p-col-head" style="background:${ANNIV_STAGE_BG[stage]};color:${ANNIV_STAGE_COLORS[stage]}"><span>${stage}</span><span>${sl.length}</span></div>
+      <div class="p-col-body">${sl.map(l=>annivCardHtml(l,today)).join('')||'<div class="empty-state" style="padding:16px">No leads</div>'}</div></div>`;
+  }).join('');
+}
+
+// ── LEAD MODAL ────────────────────────────────────────────────────────
+function annivInfoRow(label,val){ return val?`<div style="font-size:12px;margin-bottom:3px"><span style="color:var(--muted);display:inline-block;width:118px">${label}</span>${val}</div>`:''; }
+function annivOpenLead(id){
+  const l=annivLeadById(id); if(!l){ toast('Lead not found'); return; }
+  const seg=ANNIV_SEGMENTS[l.segment]||{icon:'',fg:'#475569',bg:'#f1f5f9'};
+  const mb=annivMailBlock(l);
+  const mailStr=[mb.addr,[mb.city,mb.state].filter(Boolean).join(', '),mb.zip].filter(Boolean).join(' ');
+  const du=l.anniversaryDate?daysUntil(l.anniversaryDate):null;
+  const active=ANNIV_ACTIVE.includes(l.stage);
+  annivShowModal(`<div class="modal-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">🏡 ${annivEsc(l.ownerName)}
+      <span style="background:${seg.bg};color:${seg.fg};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">${seg.icon} ${annivEsc(l.segment)}</span></div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      ${annivInfoRow('Property',annivEsc(l.propertyAddress))}
+      ${annivInfoRow(l.segment==='Landlord'?'Mail to (owner)':'Mailing',annivEsc(mailStr))}
+      ${annivInfoRow('Owned since',l.saleDate?`${fmtDate(l.saleDate)} (${annivYearsOwned(l.saleDate)} yrs)`:'')}
+      ${annivInfoRow('Anniversary',l.anniversaryDate?`${fmtDate(l.anniversaryDate)}${du!=null?` (${du<0?Math.abs(du)+' days ago':du+' days'})`:''}`:'')}
+      ${annivInfoRow('Home value',l.marketValue?fmt$(l.marketValue):'')}
+      ${annivInfoRow('TAD account #',annivEsc(l.tadAccount))}
+      ${annivInfoRow('Batch',`${annivEsc(l.batch)}${l.wave?' · Wave '+l.wave:''} · mailed ${fmtDate(l.mailDate)}${(l.cycle||1)>1?' · cycle '+l.cycle:''}`)}
+      ${l.stage==='Not Now'?annivInfoRow('Not Now',`${annivEsc(l.notNowReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
+      ${l.stage==='Quote Not Closed'?annivInfoRow('Quote Not Closed',`${annivEsc(l.qncReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
+    </div>
+    ${active?`<div class="form-group"><label class="form-label">Stage</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${ANNIV_STAGES.map(s=>`<button class="btn ${l.stage===s?'btn-primary':'btn-ghost'} btn-sm" onclick="annivSetStage('${id}','${s}')">${s}</button>`).join('')}</div>
+    </div>`:`<div style="font-size:12px;margin-bottom:12px"><b>Stage:</b> ${annivEsc(l.stage)}</div>`}
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="an-ph" value="${annivEsc(l.phone)}" placeholder="(555) 555-5555"></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="an-em" value="${annivEsc(l.email)}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="an-ag">${agentOpts(l.agentId)}</select></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Quote — Line</label><select class="form-input" id="an-ql">${['Home','Bundle','Auto','Umbrella','Landlord / Dwelling Fire','Other'].map(x=>`<option${(l.quoteLine||'Home')===x?' selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Quote — Carrier</label><input class="form-input" id="an-qc" value="${annivEsc(l.quoteCarrier)}"></div>
+      <div class="form-group"><label class="form-label">Quote — Premium</label><input class="form-input" id="an-qp" type="number" value="${l.quotePremium||''}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="an-nt" rows="3">${annivEsc(l.notes)}</textarea></div>
+    <div class="modal-actions" style="flex-wrap:wrap">
+      ${l.stage==='Quoted'?`<button class="btn btn-primary" onclick="annivOpenSold('${id}')">✓ Sold</button><button class="btn btn-danger" onclick="annivOpenQNC('${id}')">✕ Quote Not Closed</button>`:''}
+      ${active&&l.stage!=='Quoted'?`<button class="btn btn-ghost" onclick="annivOpenNotNow('${id}')">⏸ Not Now</button>`:''}
+      ${active||l.stage==='Not Now'||l.stage==='Quote Not Closed'?`<button class="btn btn-ghost" style="color:#b91c1c" onclick="annivNeverContact('${id}')">🚫 Never Contact</button>`:''}
+      ${l.stage==='Not Now'||l.stage==='Quote Not Closed'?`<button class="btn btn-ghost" onclick="annivReturnNow('${id}')">↩ Return to Pipeline Now</button>`:''}
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="annivSaveLead('${id}')">Save</button>
+    </div>`,560);
+}
+async function annivSaveLead(id){
+  const l=annivLeadById(id); if(!l) return;
+  const g=x=>document.getElementById(x).value;
+  const agentId=g('an-ag');
+  const upd={phone:g('an-ph').trim(),email:g('an-em').trim(),agentId,notes:g('an-nt').trim(),
+             quoteLine:g('an-ql'),quoteCarrier:g('an-qc').trim(),quotePremium:Number(g('an-qp'))||0};
+  await db.collection('anniversaryLeads').doc(id).update(upd);
+  if(agentId!==(l.agentId||'')){
+    const open=(DB.tasks||[]).filter(t=>t.anniversaryId===id&&!t.done);
+    for(let i=0;i<open.length;i+=400){
+      const b=db.batch(); open.slice(i,i+400).forEach(t=>b.update(db.collection('tasks').doc(t.id),{agentId})); await b.commit();
+    }
+  }
+  toast('Lead saved'); closeModal();
+}
+
+// ── STAGE CHANGES ─────────────────────────────────────────────────────
+async function annivCancelTasks(id,reason,types){
+  const open=(DB.tasks||[]).filter(t=>t.anniversaryId===id&&!t.done&&types.includes(t.type)&&t.taskType!=='mailer');
+  for(let i=0;i<open.length;i+=400){
+    const b=db.batch(); open.slice(i,i+400).forEach(t=>b.update(db.collection('tasks').doc(t.id),{done:true,cancelledReason:reason})); await b.commit();
+  }
+  return open.length;
+}
+// Quoted leads get the agency's standard quoted follow-up sequence (Days 0–14 + scripts)
+async function annivCreateQuotedTasks(id,l){
+  const steps=QUOTED_FOLLOWUP_TEMPLATES.filter(t=>!(DB.settings.disabledQuotedSteps||[]).includes(t.key));
+  const name=l.ownerName, line=l.quoteLine||'Home', today=new Date();
+  const b=db.batch();
+  steps.forEach(t=>{
+    const due=new Date(today); due.setDate(today.getDate()+t.daysOut);
+    b.set(db.collection('tasks').doc(`anq_${id}_${t.key}`),{
+      text:t.text(name,line),due:annivIso(due),priority:t.priority,agentId:l.agentId||'',done:false,
+      leadId:id,anniversaryId:id,leadName:name,line,sequenceDay:t.daysOut,taskType:t.taskType,autoSend:t.autoSend||false,
+      stepKey:t.key,type:'quoted-followup',createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  });
+  await b.commit();
+  logActivity('🎯','#dbeafe',`Quoted follow-up tasks created for Anniversary lead <b>${annivEsc(name)}</b>`);
+}
+async function annivSetStage(id,stage){
+  const l=annivLeadById(id); if(!l) return;
+  if(stage==='Sold'){ annivOpenSold(id); return; }
+  if(stage===l.stage){ closeModal(); return; }
+  const today=annivToday(), idx=ANNIV_STAGES.indexOf(stage);
+  const upd={stage};
+  for(let k=1;k<=idx;k++){ const key=ANNIV_STAGE_REACHED_KEY[ANNIV_STAGES[k]]; if(key&&!(l.reached||{})[key]) upd['reached.'+key]=today; }
+  if(stage==='Quoted'&&!l.quotedDate) upd.quotedDate=today;
+  // Pick up any quote details typed into the open modal
+  const qp=document.getElementById('an-qp');
+  if(qp){ upd.quoteLine=document.getElementById('an-ql').value; upd.quoteCarrier=document.getElementById('an-qc').value.trim(); upd.quotePremium=Number(qp.value)||0; }
+  await db.collection('anniversaryLeads').doc(id).update(upd);
+  if(stage==='Quoted'&&l.stage!=='Quoted'){
+    await annivCancelTasks(id,'Quoted',['anniversary-followup']);
+    await annivCreateQuotedTasks(id,{...l,...upd});
+  } else if(l.stage==='Quoted'&&stage!=='Quoted'){
+    await annivCancelTasks(id,stage,['quoted-followup']);
+  }
+  logActivity('🎯','#ede9fe',`Anniversary: <b>${annivEsc(l.ownerName)}</b> → ${stage}`);
+  toast(`${l.ownerName} → ${stage}`); closeModal();
+}
+function annivOpenSold(id){
+  const l=annivLeadById(id); if(!l) return;
+  annivShowModal(`<div class="modal-title">🎉 Sold — ${annivEsc(l.ownerName)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">This records a Closed Won sale (source: Anniversary) so it counts on the Scoreboard and appears under Customers.</div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Line *</label><select class="form-input" id="as-line">${['Home','Bundle','Auto','Umbrella','Landlord / Dwelling Fire','Other'].map(x=>`<option${(l.quoteLine||'Home')===x?' selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Carrier</label><input class="form-input" id="as-car" value="${annivEsc(l.quoteCarrier)}"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Annual Premium ($) *</label><input class="form-input" id="as-prem" type="number" value="${l.quotePremium||''}"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="annivOpenLead('${id}')">Back</button><button class="btn btn-primary" onclick="annivSaveSold('${id}')">Mark Sold</button></div>`,500);
+}
+async function annivSaveSold(id){
+  const l=annivLeadById(id); if(!l) return;
+  const line=document.getElementById('as-line').value, carrier=document.getElementById('as-car').value.trim();
+  const premium=Number(document.getElementById('as-prem').value)||0;
+  if(premium<=0){ alert('Enter the annual premium.'); return; }
+  const today=annivToday();
+  const fn=l.firstName||l.ownerName, ln=l.firstName?(l.lastName||''):'';
+  await db.collection('leads').add({
+    firstName:fn,lastName:ln,email:l.email||'',phone:l.phone||'',leadType:'Personal Lines',line,carrier,
+    source:'Anniversary',referralPartnerId:'',referralPartnerName:'',agentId:l.agentId||'',status:'Closed Won',premium,
+    date:today,closedDate:today,quotedDate:l.quotedDate||today,
+    notes:`Anniversary pipeline — ${l.batch} (${l.segment})\n${l.propertyAddress}`,
+    quotes:[],soldQuotes:[{line,carrier,premium,status:'closed-won',closedDate:today}],lostQuotes:[],
+    anniversaryRef:id,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  const upd={stage:'Sold',soldDate:today,soldPremium:premium,soldLine:line,quoteLine:line,quoteCarrier:carrier,quotePremium:premium};
+  ['contacting','conversation','quoted','sold'].forEach(k=>{ if(!(l.reached||{})[k]) upd['reached.'+k]=today; });
+  if(!l.quotedDate) upd.quotedDate=today;
+  await db.collection('anniversaryLeads').doc(id).update(upd);
+  await annivCancelTasks(id,'Closed Won',['anniversary-followup','quoted-followup']);
+  logActivity('🎉','#dcfce7',`Anniversary sale: <b>${annivEsc(l.ownerName)}</b> — ${line} ${fmt$(premium)} (${annivEsc(l.batch)})`);
+  broadcastCelebration({producerName:getProducerName(l.agentId),customerName:l.ownerName,line,premium});
+  toast('🎉 Sold! Added to Customers and the Scoreboard.'); closeModal();
+}
+
+// ── NOT NOW / NEVER CONTACT / RESURFACE ───────────────────────────────
+function annivOpenNotNow(id){
+  const l=annivLeadById(id); if(!l) return;
+  const x=annivNextXDate(l), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+  annivShowModal(`<div class="modal-title">⏸ Not Now — ${annivEsc(l.ownerName)}</div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.6">
+      Removes this lead from the active Anniversary pipeline and cancels its open tasks. It moves to <b>Remarketing</b> and comes back automatically.<br>
+      <b>Next anniversary (X-date):</b> ${fmtDate(x)}<br><b>Resurfaces:</b> ${fmtDate(r)} (${ANNIV_RESURFACE_DAYS} days before)</div>
+    <div class="form-group"><label class="form-label">Reason</label><select class="form-input" id="nn-reason">${ANNIV_NOT_NOW_REASONS.map(x=>`<option>${x}</option>`).join('')}</select></div>
+    <div class="form-group"><label class="form-label">Note (optional)</label><input class="form-input" id="nn-note" placeholder="e.g. renews with State Farm in March"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="annivConfirmNotNow('${id}')">Move to Not Now</button></div>`,500);
+}
+function annivConfirmNotNow(id){
+  const note=document.getElementById('nn-note').value.trim(), reason=document.getElementById('nn-reason').value;
+  annivNotNow(id,note?`${reason} — ${note}`:reason);
+}
+async function annivNotNow(id,reason,auto){
+  const ref=db.collection('anniversaryLeads').doc(id); let info=null;
+  await db.runTransaction(async tx=>{
+    const s=await tx.get(ref); if(!s.exists) return;
+    const d=s.data(); if(!ANNIV_ACTIVE.includes(d.stage)) return;
+    const x=annivNextXDate(d), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+    tx.update(ref,{stage:'Not Now',notNowAt:annivToday(),notNowReason:reason,xDate:x,resurfaceDate:r});
+    info={name:d.ownerName,x,r};
+  });
+  if(!info) { if(!auto) closeModal(); return; }
+  await annivCancelTasks(id,'Not Now',['anniversary-followup','quoted-followup']);
+  logActivity('⏸','#fef3c7',`Anniversary: <b>${annivEsc(info.name)}</b> → Not Now${auto?' (cadence ended)':''} — resurfaces ${fmtDate(info.r)}`);
+  if(!auto){ toast(`Moved to Not Now — back on ${fmtDate(info.r)}`); closeModal(); }
+}
+// ── QUOTE NOT CLOSED ──────────────────────────────────────────────────
+// A quoted lead we didn't sell. Leaves the board, lands in the Remarketing queue,
+// gets the standard Month 3/6/9 remarket touchpoints, and — like Not Now — comes
+// back automatically 60 days before the next anniversary.
+const ANNIV_QNC_REASONS = ['Price too high','Went with another carrier','Staying with current agent','Coverage not what they wanted','Stopped responding','Other'];
+function annivOpenQNC(id){
+  const l=annivLeadById(id); if(!l) return;
+  const x=annivNextXDate(l), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+  annivShowModal(`<div class="modal-title">✕ Quote Not Closed — ${annivEsc(l.ownerName)}</div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.6">
+      Removes this lead from the pipeline and sends it to <b>Remarketing</b>. It gets the Month 3 / 6 / 9 remarket touchpoints and comes back automatically before its next anniversary.<br>
+      <b>Next anniversary (X-date):</b> ${fmtDate(x)}<br><b>Resurfaces:</b> ${fmtDate(r)} (${ANNIV_RESURFACE_DAYS} days before)</div>
+    <div class="form-group"><label class="form-label">Why didn't it close?</label><select class="form-input" id="qnc-reason">${ANNIV_QNC_REASONS.map(x=>`<option>${x}</option>`).join('')}</select></div>
+    <div class="form-group"><label class="form-label">Note (optional)</label><input class="form-input" id="qnc-note" placeholder="e.g. competitor was $200 cheaper"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="annivOpenLead('${id}')">Back</button><button class="btn btn-danger" onclick="annivConfirmQNC('${id}')">Mark Quote Not Closed</button></div>`,500);
+}
+function annivConfirmQNC(id){
+  const note=document.getElementById('qnc-note').value.trim(), reason=document.getElementById('qnc-reason').value;
+  annivQuoteNotClosed(id,note?`${reason} — ${note}`:reason);
+}
+async function annivQuoteNotClosed(id,reason){
+  const ref=db.collection('anniversaryLeads').doc(id); let info=null;
+  await db.runTransaction(async tx=>{
+    const s=await tx.get(ref); if(!s.exists) return;
+    const d=s.data(); if(d.stage!=='Quoted') return;
+    const x=annivNextXDate(d), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+    tx.update(ref,{stage:'Quote Not Closed',qncAt:annivToday(),qncReason:reason,xDate:x,resurfaceDate:r});
+    info={d,x,r};
+  });
+  if(!info){ closeModal(); return; }
+  await annivCancelTasks(id,'Quote Not Closed',['anniversary-followup','quoted-followup']);
+  await createRemarketingTouchpointTasks(id,{name:info.d.ownerName,line:info.d.quoteLine||'Home',agentId:info.d.agentId});
+  logActivity('✕','#ffedd5',`Anniversary: <b>${annivEsc(info.d.ownerName)}</b> → Quote Not Closed — in Remarketing, resurfaces ${fmtDate(info.r)}`);
+  toast(`Quote Not Closed — in Remarketing, back on ${fmtDate(info.r)}`); closeModal();
+}
+async function annivNeverContact(id){
+  const l=annivLeadById(id); if(!l) return;
+  if(!confirm(`Archive ${l.ownerName} as Never Contact?\n\nThey will be removed from the pipeline and will NOT resurface.`)) return;
+  await db.collection('anniversaryLeads').doc(id).update({stage:'Archived',neverContact:true,archivedAt:annivToday(),resurfaceDate:firebase.firestore.FieldValue.delete()});
+  await annivCancelTasks(id,'Archived',['anniversary-followup','quoted-followup']);
+  logActivity('🚫','#fee2e2',`Anniversary: <b>${annivEsc(l.ownerName)}</b> archived — never contact`);
+  toast('Archived — will not resurface'); closeModal();
+}
+function annivReturnNow(id){
+  const l=annivLeadById(id); if(!l) return;
+  if(!confirm(`Return ${l.ownerName} to the Anniversary pipeline now?\n\nA fresh mailer + call cadence will start today.`)) return;
+  annivResurface(id,false).then(()=>closeModal());
+}
+function annivResurfBatch(todayISO){ return 'Anniv-Resurf-'+annivMonthYY(todayISO); }
+// Starts a brand-new cycle for a Not Now lead. The finished cycle is archived in
+// `history` (so its batch's report numbers never change), and the lead re-enters
+// at Mailed under an "Anniv-Resurf-MmmYY" batch.
+async function annivResurface(id,auto){
+  const ref=db.collection('anniversaryLeads').doc(id); let rec=null;
+  await db.runTransaction(async tx=>{
+    const s=await tx.get(ref); if(!s.exists) return;
+    const d=s.data(); if(!['Not Now','Quote Not Closed'].includes(d.stage)||d.neverContact) return;
+    const today=annivToday(), cyc=(d.cycle||1)+1;
+    const history=[...(d.history||[]),{cycle:d.cycle||1,batch:d.batch,wave:d.wave||null,segment:d.segment,mailDate:d.mailDate,
+      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:d.stage,reason:d.qncReason||d.notNowReason||''}];
+    const del=firebase.firestore.FieldValue.delete();
+    const upd={stage:'Mailed',cycle:cyc,batch:annivResurfBatch(today),wave:null,mailDate:today,anniversaryDate:d.xDate,
+      cadenceEnd:annivBizDay(annivAddDays(today,21)),reached:{},history,resurfacedAt:today};
+    tx.update(ref,{...upd,xDate:del,resurfaceDate:del,notNowAt:del,notNowReason:del,qncAt:del,qncReason:del,quotedDate:del,quotePremium:del,quoteCarrier:del});
+    rec={...d,...upd,idx:annivHash(id)%50};
+  });
+  if(!rec) return;
+  // Returning early? The Month 3/6/9 remarket touchpoints from a Quote Not Closed no longer apply
+  const staleTp=(DB.tasks||[]).filter(t=>t.type==='remarketing-touchpoint'&&t.leadId===id&&!t.done);
+  if(staleTp.length){ const sb=db.batch(); staleTp.forEach(t=>sb.update(db.collection('tasks').doc(t.id),{done:true,cancelledReason:'Resurfaced'})); await sb.commit(); }
+  const tasks=annivBuildCadenceTasks(id,rec,{perLeadMailers:true});
+  const b=db.batch(); tasks.forEach(t=>b.set(db.collection('tasks').doc(t.id),t.data)); await b.commit();
+  logActivity('🔄','#ffedd5',`Anniversary: <b>${annivEsc(rec.ownerName)}</b> resurfaced for the upcoming anniversary — new cadence started`);
+  if(!auto) toast(`${rec.ownerName} is back in the Anniversary pipeline`);
+  return rec;
+}
+
+// ── AUTOMATIC STAGE LOGIC (runs whenever leads or tasks sync) ─────────
+//  1. Not Now leads whose resurface date has arrived come back (new cycle)
+//  2. Mailed → Contacting once any call/email task has been completed
+//  3. Cadence over without a quote (any stage before Quoted) (final call done, or Day 21 passed
+//     for leads with no phone) → Not Now automatically
+let _annivSyncBusy=false;
+async function annivSync(){
+  if(_annivSyncBusy||!DB._annivReady||!DB._tasksReady||!db) return;
+  _annivSyncBusy=true;
+  try{
+    const today=annivToday(), leads=DB.anniversaryLeads||[];
+    if(!leads.length) return;
+    // resurface
+    const back=leads.filter(l=>['Not Now','Quote Not Closed'].includes(l.stage)&&!l.neverContact&&l.resurfaceDate&&l.resurfaceDate<=today);
+    let resurfaced=0;
+    for(const l of back){ if(await annivResurface(l.id,true)) resurfaced++; }
+    if(resurfaced) toast(`${resurfaced} Anniversary lead${resurfaced>1?'s':''} resurfaced — new cadence started`);
+    // task index for active leads
+    const byLead=new Map();
+    (DB.tasks||[]).forEach(t=>{ if(t.type==='anniversary-followup'&&t.anniversaryId&&t.taskType!=='mailer'){ (byLead.get(t.anniversaryId)||byLead.set(t.anniversaryId,[]).get(t.anniversaryId)).push(t); } });
+    for(const l of leads){
+      if(!['Mailed','Contacting','Conversation'].includes(l.stage)) continue;
+      const ts=(byLead.get(l.id)||[]).filter(t=>(t.cycle||1)===(l.cycle||1));
+      const worked=ts.some(t=>t.done&&!t.cancelledReason);
+      if(l.stage==='Mailed'&&worked){
+        const upd={stage:'Contacting'}; if(!(l.reached||{}).contacting) upd['reached.contacting']=today;
+        await db.collection('anniversaryLeads').doc(l.id).update(upd);
+      }
+      const fin=ts.find(t=>t.seqKey==='a_final');
+      const over=fin?(fin.done&&!fin.cancelledReason):(l.cadenceEnd&&l.cadenceEnd<today);
+      if(over) await annivNotNow(l.id,'Cadence ended — not quoted',true);
+    }
+  }catch(e){ console.error('annivSync error:',e); }
+  finally{ _annivSyncBusy=false; }
+}
+
+// ── MAILER LIST EXPORT ────────────────────────────────────────────────
+function annivOpenExport(){
+  const all=DB.anniversaryLeads||[];
+  const batches=[...new Set(all.map(l=>l.batch).filter(Boolean))].sort().reverse();
+  if(!batches.length){ toast('No Anniversary batches yet'); return; }
+  annivShowModal(`<div class="modal-title">📬 Mailer List</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">Exports a mail-merge CSV. Landlords use their owner mailing address; everyone else uses the mailing address on file (property address if none).</div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Batch</label><select class="form-input" id="ax-batch" onchange="annivExportWaves()">${batches.map(b=>`<option>${annivEsc(b)}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Wave</label><select class="form-input" id="ax-wave"></select></div>
+    </div>
+    <div class="form-group"><label class="form-label">Which mailer</label><select class="form-input" id="ax-which">
+      <option value="1">Mailer 1 (Day 0) — every lead in the wave</option>
+      <option value="2">Mailer 2 (Day 14) — only leads still in play (no quote / sale / Not Now)</option></select></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="annivDoExport()">⬇ Download CSV</button></div>`,520);
+  annivExportWaves();
+}
+function annivExportWaves(){
+  const b=document.getElementById('ax-batch').value;
+  const waves=[...new Set((DB.anniversaryLeads||[]).filter(l=>l.batch===b).map(l=>l.wave).filter(Boolean))].sort((a,c)=>a-c);
+  document.getElementById('ax-wave').innerHTML='<option value="">All waves</option>'+waves.map(w=>`<option value="${w}">Wave ${w}</option>`).join('');
+}
+function annivDoExport(){
+  const b=document.getElementById('ax-batch').value, w=document.getElementById('ax-wave').value, which=document.getElementById('ax-which').value;
+  let list=(DB.anniversaryLeads||[]).filter(l=>l.batch===b&&(!w||String(l.wave)===w)&&l.stage!=='Archived'&&!l.neverContact);
+  if(which==='2') list=list.filter(l=>['Mailed','Contacting','Conversation'].includes(l.stage));
+  else list=list.filter(l=>l.stage!=='Not Now');
+  if(!list.length){ alert('No leads match.'); return; }
+  list.sort((a,c)=>(a.wave||0)-(c.wave||0)||(a.ownerName||'').localeCompare(c.ownerName||''));
+  const rows=[['Owner','Address','City','State','ZIP','Segment','Wave','Mail Date','Property Address','TAD Account']];
+  list.forEach(l=>{ const m=annivMailBlock(l); rows.push([l.ownerName,m.addr,m.city,m.state,m.zip,l.segment,l.wave||'',l.mailDate,l.propertyAddress,l.tadAccount]); });
+  annivDownload(`${b}${w?'-W'+w:''}-mailer${which}.csv`,annivCsvOut(rows));
+  toast(`${list.length} addresses exported`); closeModal();
+}
+
+// ── DELETE A BATCH ────────────────────────────────────────────────────
+function annivOpenDeleteBatch(){
+  const all=DB.anniversaryLeads||[];
+  const batches=[...new Set(all.map(l=>l.batch).filter(Boolean))].sort().reverse();
+  if(!batches.length){ toast('No Anniversary batches to delete'); return; }
+  annivShowModal(`<div class="modal-title">🗑 Delete Anniversary Batch</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">Permanently removes every lead in the batch and all of its tasks (including the wave mailer tasks). Leads already marked <b>Sold</b> are kept, and the customer records they created are never touched.</div>
+    <div class="form-group"><label class="form-label">Batch</label><select class="form-input" id="ad-batch" onchange="annivDeleteBatchInfo()">${batches.map(b=>`<option>${annivEsc(b)}</option>`).join('')}</select></div>
+    <div id="ad-info" style="font-size:13px;margin-bottom:8px"></div>
+    <div class="form-group"><label class="form-label">Type the batch tag to confirm</label><input class="form-input" id="ad-confirm" autocomplete="off"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-danger" id="ad-go" onclick="annivDeleteBatch()">Delete Batch</button></div>`,500);
+  annivDeleteBatchInfo();
+}
+function annivBatchScope(b){
+  const leads=(DB.anniversaryLeads||[]).filter(l=>l.batch===b&&l.stage!=='Sold');
+  const kept=(DB.anniversaryLeads||[]).filter(l=>l.batch===b&&l.stage==='Sold').length;
+  const ids=new Set(leads.map(l=>l.id));
+  const slug=String(b).replace(/[^A-Za-z0-9]/g,'');
+  const tasks=(DB.tasks||[]).filter(t=>(t.anniversaryId&&ids.has(t.anniversaryId))||(t.type==='anniversary-followup'&&t.taskType==='mailer'&&t.batch===b&&!t.anniversaryId)||String(t.id).startsWith('anm_'+slug+'_w'));
+  return {leads,kept,tasks};
+}
+function annivDeleteBatchInfo(){
+  const b=document.getElementById('ad-batch').value, s=annivBatchScope(b);
+  document.getElementById('ad-info').innerHTML=`<b>${s.leads.length}</b> lead(s) and <b>${s.tasks.length}</b> task(s) will be deleted.${s.kept?` <b>${s.kept}</b> Sold lead(s) will be kept.`:''}`;
+}
+async function annivDeleteBatch(){
+  const b=document.getElementById('ad-batch').value;
+  if(document.getElementById('ad-confirm').value.trim()!==b){ alert(`Type "${b}" exactly to confirm.`); return; }
+  const s=annivBatchScope(b), btn=document.getElementById('ad-go'); btn.disabled=true; btn.textContent='Deleting…';
+  try{
+    const refs=[...s.tasks.map(t=>db.collection('tasks').doc(t.id)),...s.leads.map(l=>db.collection('anniversaryLeads').doc(l.id))];
+    for(let i=0;i<refs.length;i+=400){ const bt=db.batch(); refs.slice(i,i+400).forEach(r=>bt.delete(r)); await bt.commit(); }
+    logActivity('🗑','#fee2e2',`Anniversary batch <b>${annivEsc(b)}</b> deleted — ${s.leads.length} leads, ${s.tasks.length} tasks`);
+    toast(`Batch ${b} deleted`); closeModal();
+  }catch(e){ alert('Delete failed: '+e.message); btn.disabled=false; btn.textContent='Delete Batch'; }
+}
+
+// ── BATCH REPORTING (KPIs page) ───────────────────────────────────────
+// One record per lead per cycle: finished cycles live in `history`, the current
+// cycle is the lead itself — so a resurfaced lead's second try is reported
+// under its resurface batch and never rewrites the original batch's numbers.
+function renderAnniversaryKPIs(){
+  const el=document.getElementById('kpi-anniv-list'); if(!el) return;
+  const today=annivToday(), recs=[];
+  (DB.anniversaryLeads||[]).forEach(l=>{
+    (l.history||[]).forEach(h=>recs.push({batch:h.batch,segment:h.segment||l.segment,reached:h.reached||{},mailDate:h.mailDate,soldPremium:0,qnc:h.outcome==='Quote Not Closed'}));
+    recs.push({batch:l.batch,segment:l.segment,reached:l.reached||{},mailDate:l.mailDate,soldPremium:l.stage==='Sold'?Number(l.soldPremium||0):0,qnc:l.stage==='Quote Not Closed'});
+  });
+  if(!recs.length){ el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No Anniversary batches yet. Import one from Pipeline → Anniversary.</div>'; return; }
+  const blank=()=>({imported:0,mailed:0,contacted:0,conv:0,quoted:0,sold:0,qnc:0,prem:0});
+  const add=(a,r)=>{ a.imported++; if(r.mailDate&&r.mailDate<=today) a.mailed++; if(r.reached.contacting) a.contacted++; if(r.reached.conversation) a.conv++; if(r.reached.quoted) a.quoted++; if(r.reached.sold) a.sold++; if(r.qnc) a.qnc++; a.prem+=r.soldPremium; };
+  const byBatch={}, byBS={}, total=blank();
+  recs.forEach(r=>{ const b=r.batch||'(none)'; add(byBatch[b]=byBatch[b]||blank(),r); add(byBS[b+'|'+r.segment]=byBS[b+'|'+r.segment]||blank(),r); add(total,r); });
+  const per100=a=>a.mailed?(a.quoted/a.mailed*100).toFixed(1):'—';
+  const row=(label,a,sub)=>`<tr style="${sub?'color:var(--muted);font-size:12px':'font-weight:600'}">
+    <td style="padding:7px 10px;${sub?'padding-left:26px':''}">${label}</td><td>${a.imported}</td><td>${a.mailed}</td><td>${a.contacted}</td><td>${a.conv}</td><td>${a.quoted}</td><td>${a.sold}</td><td>${a.qnc}</td><td>${a.prem?fmt$(a.prem):'—'}</td><td style="font-weight:700;color:var(--teal)">${per100(a)}</td></tr>`;
+  const batches=Object.keys(byBatch).sort().reverse();
+  el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr><th style="text-align:left;padding:7px 10px">Batch</th><th>Imported</th><th>Mailed</th><th>Contacted</th><th>Conversations</th><th>Quoted</th><th>Sold</th><th>Quote Not Closed</th><th>Sold Premium</th><th>Quotes / 100 Mailed</th></tr></thead>
+    <tbody>${batches.map(b=>row(annivEsc(b),byBatch[b],false)+Object.keys(ANNIV_SEGMENTS).filter(s=>byBS[b+'|'+s]).map(s=>row(`${ANNIV_SEGMENTS[s].icon} ${s}`,byBS[b+'|'+s],true)).join('')).join('')}
+    ${batches.length>1?row('All batches',total,false):''}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);padding:8px 10px">Contacted = reached Contacting or beyond · Conversations = reached Conversation or beyond · Mailed counts leads whose mail date has passed.</div>`;
+}
+
+// ── "+ TASK" ON AN ANNIVERSARY LEAD ───────────────────────────────────
+function annivTaskForm(a){ return leadTaskForm(a,'anniversary'); }
 </script>
 
 <script>

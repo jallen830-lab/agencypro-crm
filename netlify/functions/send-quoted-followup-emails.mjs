@@ -134,11 +134,14 @@ export default async function handler() {
   if (!projectId || !apiKey) throw new Error('Missing Firebase env vars');
   if (!resendKey)            throw new Error('Missing RESEND_API_KEY');
 
-  const [tasks, leads, producers] = await Promise.all([
+  const [tasks, leadRecords, anniversaryLeads, producers] = await Promise.all([
     firestoreGet(projectId, apiKey, 'tasks'),
     firestoreGet(projectId, apiKey, 'leads'),
+    firestoreGet(projectId, apiKey, 'anniversaryLeads'),
     firestoreGet(projectId, apiKey, 'producers'),
   ]);
+  // Anniversary leads share the id/email/firstName shape, so quoted follow-ups on them send the same way
+  const leads = leadRecords.concat(anniversaryLeads);
 
   const today = getTodayCST();
   const due = tasks.filter(t =>
