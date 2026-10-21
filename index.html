@@ -6953,7 +6953,7 @@ function annivCardHtml(l,today){
       <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:#f1f5f9;color:#475569">${annivEsc(l.batch)}${l.wave?' · W'+l.wave:''}</span>
     </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${annivEsc(l.propertyAddress)}">${addr}</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${du!=null?`Renews ~${annivPretty(l.anniversaryDate)} (${du}d)`:''}${unmailed?` · mails ${annivPretty(l.mailDate)}`:''}${l.stage==='Quoted'&&l.quotePremium?` · ${fmt$(l.quotePremium)}`:''}${l.stage==='Sold'&&l.soldPremium?` · ${fmt$(l.soldPremium)}`:''}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${du!=null?`Renews ~${annivPretty(l.anniversaryDate)} (${du}d)`:''}${unmailed?` · mails ${annivPretty(l.mailDate)}`:''}${l.stage==='Quoted'&&l.quotePremium?` · ${annivQuotesOf(l).length>1?annivEsc(annivLinesLabel(annivQuotesOf(l)))+' ':''}${fmt$(l.quotePremium)}`:''}${l.stage==='Sold'&&l.soldPremium?` · ${l.soldLine&&l.soldLine.includes('+')?annivEsc(l.soldLine)+' ':''}${fmt$(l.soldPremium)}`:''}</div>
     <div style="display:flex;align-items:center;justify-content:space-between">
       <span style="font-size:11px;font-weight:600;color:var(--teal)">${l.marketValue?fmt$(l.marketValue):''}</span>
       <div style="display:flex;align-items:center;gap:4px">
@@ -7004,42 +7004,79 @@ function renderAnniversaryBoard(){
   }).join('');
 }
 
-// ── LEAD MODAL ────────────────────────────────────────────────────────
+// ── QUOTE LINES ───────────────────────────────────────────────────────
+// A lead can carry several quote lines (Home + Auto + Umbrella …). Each line is
+// {line, carrier, premium, status:'open'|'sold'|'lost'}. Older records only have the
+// single quoteLine/quoteCarrier/quotePremium fields — annivQuotesOf() reads both shapes.
+const ANNIV_LINES = ['Home','Auto','Umbrella','Specialty','Wind/Hail Buydown','Life','Commercial'];
+function annivQuotesOf(l){
+  if(Array.isArray(l.quotes)) return l.quotes;
+  if(l.quotePremium||l.quoteCarrier) return [{line:l.quoteLine||'Home',carrier:l.quoteCarrier||'',premium:Number(l.quotePremium)||0,status:'open'}];
+  return [];
+}
+function annivQuoteTotal(qs){ return qs.filter(q=>q.status!=='lost').reduce((s,q)=>s+(Number(q.premium)||0),0); }
+function annivLinesLabel(qs){ const u=[...new Set(qs.map(q=>q.line).filter(Boolean))]; return u.length?u.join(' + '):'Home'; }
+function annivQuoteRowHtml(q,withSold){
+  const lines=ANNIV_LINES.includes(q.line)||!q.line?ANNIV_LINES:[...ANNIV_LINES,q.line];
+  const st=q.status==='sold'?'<span style="font-size:10px;color:#166534;font-weight:700">SOLD</span>':q.status==='lost'?'<span style="font-size:10px;color:#991b1b;font-weight:700">NOT SOLD</span>':'';
+  return `<div class="an-qrow" data-status="${annivEsc(q.status||'open')}" style="display:grid;grid-template-columns:${withSold?'auto ':''}1.2fr 1.2fr .9fr auto;gap:6px;margin-bottom:6px;align-items:center">
+    ${withSold?`<input type="checkbox" class="an-q-sold" ${q.status==='lost'?'':'checked'} title="Sold">`:''}
+    <select class="form-input an-q-line">${lines.map(x=>`<option${(q.line||'Home')===x?' selected':''}>${annivEsc(x)}</option>`).join('')}</select>
+    <input class="form-input an-q-car" placeholder="Carrier" value="${annivEsc(q.carrier)}">
+    <input class="form-input an-q-prem" type="number" placeholder="Annual $" value="${q.premium||''}">
+    <span style="display:flex;align-items:center;gap:4px">${st}<button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px" onclick="this.closest('.an-qrow').remove()" title="Remove this line">✕</button></span></div>`;
+}
+function annivAddQuoteRow(containerId,withSold){
+  const c=document.getElementById(containerId); if(c) c.insertAdjacentHTML('beforeend',annivQuoteRowHtml({line:'Auto',status:'open'},withSold));
+}
+// Reads the quote rows in a container. Rows with neither carrier nor premium are ignored.
+function annivReadQuoteRows(containerId){
+  const c=document.getElementById(containerId); if(!c) return null;
+  return [...c.querySelectorAll('.an-qrow')].map(r=>({
+    line:r.querySelector('.an-q-line').value, carrier:r.querySelector('.an-q-car').value.trim(),
+    premium:Number(r.querySelector('.an-q-prem').value)||0, status:r.dataset.status||'open',
+    _sold:r.querySelector('.an-q-sold')?r.querySelector('.an-q-sold').checked:undefined
+  })).filter(q=>q.carrier||q.premium);
+}
+
+// ── LEAD MODAL (every field editable) ─────────────────────────────────
 function annivInfoRow(label,val){ return val?`<div style="font-size:12px;margin-bottom:3px"><span style="color:var(--muted);display:inline-block;width:118px">${label}</span>${val}</div>`:''; }
+function annivField(label,id,val,extra){ return `<div class="form-group"><label class="form-label">${label}</label><input class="form-input" id="${id}" value="${annivEsc(val)}" ${extra||''}></div>`; }
 function annivOpenLead(id){
   const l=annivLeadById(id); if(!l){ toast('Lead not found'); return; }
   const seg=ANNIV_SEGMENTS[l.segment]||{icon:'',fg:'#475569',bg:'#f1f5f9'};
-  const mb=annivMailBlock(l);
-  const mailStr=[mb.addr,[mb.city,mb.state].filter(Boolean).join(', '),mb.zip].filter(Boolean).join(' ');
   const du=l.anniversaryDate?daysUntil(l.anniversaryDate):null;
   const active=ANNIV_ACTIVE.includes(l.stage);
+  const qs=annivQuotesOf(l);
   annivShowModal(`<div class="modal-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">🏡 ${annivEsc(l.ownerName)}
       <span style="background:${seg.bg};color:${seg.fg};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">${seg.icon} ${annivEsc(l.segment)}</span></div>
     <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px">
-      ${annivInfoRow('Property',annivEsc(l.propertyAddress))}
-      ${annivInfoRow(l.segment==='Landlord'?'Mail to (owner)':'Mailing',annivEsc(mailStr))}
-      ${annivInfoRow('Owned since',l.saleDate?`${fmtDate(l.saleDate)} (${annivYearsOwned(l.saleDate)} yrs)`:'')}
       ${annivInfoRow('Anniversary',l.anniversaryDate?`${fmtDate(l.anniversaryDate)}${du!=null?` (${du<0?Math.abs(du)+' days ago':du+' days'})`:''}`:'')}
-      ${annivInfoRow('Home value',l.marketValue?fmt$(l.marketValue):'')}
-      ${annivInfoRow('TAD account #',annivEsc(l.tadAccount))}
-      ${annivInfoRow('Neighborhood',annivEsc(l.neighborhood))}
-      ${l.nameCheck?annivInfoRow('⚠ Name check',`<span style="color:#b45309">${annivEsc(l.nameCheck)} — confirm the owner before the first call</span>`):''}
+      ${annivInfoRow('Owned',l.saleDate?`${annivYearsOwned(l.saleDate)} years`:'')}
       ${annivInfoRow('Batch',`${annivEsc(l.batch)}${l.wave?' · Wave '+l.wave:''} · mailed ${fmtDate(l.mailDate)}${(l.cycle||1)>1?' · cycle '+l.cycle:''}`)}
       ${l.stage==='Not Now'?annivInfoRow('Not Now',`${annivEsc(l.notNowReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
       ${l.stage==='Quote Not Closed'?annivInfoRow('Quote Not Closed',`${annivEsc(l.qncReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
+      ${l.nameCheck?`<div style="font-size:12px;margin-top:6px;color:#b45309">⚠ ${annivEsc(l.nameCheck)} — confirm the owner before the first call.
+        <label style="display:flex;gap:6px;align-items:center;margin-top:4px;color:var(--text)"><input type="checkbox" id="an-nc"> Owner confirmed — clear this flag</label></div>`:''}
     </div>
     ${active?`<div class="form-group"><label class="form-label">Stage</label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${ANNIV_STAGES.map(s=>`<button class="btn ${l.stage===s?'btn-primary':'btn-ghost'} btn-sm" onclick="annivSetStage('${id}','${s}')">${s}</button>`).join('')}</div>
     </div>`:`<div style="font-size:12px;margin-bottom:12px"><b>Stage:</b> ${annivEsc(l.stage)}</div>`}
+    <div class="form-row">${annivField('Owner name *','an-name',l.ownerName)}${annivField('Greeting first name (blank = "Hi there")','an-first',l.firstName)}</div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="an-ph" value="${annivEsc(l.phone)}" placeholder="(555) 555-5555"></div>
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="an-em" value="${annivEsc(l.email)}"></div>
+      <div class="form-group"><label class="form-label">Segment</label><select class="form-input" id="an-seg">${Object.keys(ANNIV_SEGMENTS).map(s=>`<option${l.segment===s?' selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="an-ag">${agentOpts(l.agentId)}</select></div>
     </div>
-    <div class="form-group"><label class="form-label">Assigned To</label><select class="form-input" id="an-ag">${agentOpts(l.agentId)}</select></div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Quote — Line</label><select class="form-input" id="an-ql">${['Home','Bundle','Auto','Umbrella','Landlord / Dwelling Fire','Other'].map(x=>`<option${(l.quoteLine||'Home')===x?' selected':''}>${x}</option>`).join('')}</select></div>
-      <div class="form-group"><label class="form-label">Quote — Carrier</label><input class="form-input" id="an-qc" value="${annivEsc(l.quoteCarrier)}"></div>
-      <div class="form-group"><label class="form-label">Quote — Premium</label><input class="form-input" id="an-qp" type="number" value="${l.quotePremium||''}"></div>
+    <div class="form-row">${annivField('Phone','an-ph',l.phone,'placeholder="(555) 555-5555"')}${annivField('Email','an-em',l.email)}</div>
+    ${annivField('Property address','an-pa',l.propertyAddress)}
+    ${annivField('Mailing address','an-ma',l.mailAddress)}
+    <div class="form-row">${annivField('Mailing city','an-mc',l.mailCity)}
+      <div class="form-row" style="margin:0">${annivField('State','an-ms',l.mailState)}${annivField('ZIP','an-mz',l.mailZip)}</div></div>
+    <div class="form-row">${annivField('Sale / purchase date','an-sd',l.saleDate,'type="date"')}${annivField('Home value ($)','an-mv',l.marketValue||'','type="number"')}</div>
+    <div class="form-row">${annivField('TAD account #','an-tad',l.tadAccount)}${annivField('Neighborhood','an-nb',l.neighborhood)}</div>
+    <div class="form-group"><label class="form-label">Quotes <span style="font-weight:400;color:var(--muted)">— add a line for each policy quoted (Home, Auto, Umbrella…)</span></label>
+      <div id="an-quotes">${qs.map(q=>annivQuoteRowHtml(q,false)).join('')}</div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="annivAddQuoteRow('an-quotes',false)">+ Add quote line</button>
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="an-nt" rows="3">${annivEsc(l.notes)}</textarea></div>
     <div class="modal-actions" style="flex-wrap:wrap">
@@ -7050,21 +7087,46 @@ function annivOpenLead(id){
       <span style="flex:1"></span>
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       <button class="btn btn-primary" onclick="annivSaveLead('${id}')">Save</button>
-    </div>`,560);
+    </div>`,680);
+}
+// Collects every edit from the open lead modal. Returns {upd, retouch} or {error}.
+function annivCollectEdits(l){
+  const g=x=>document.getElementById(x), v=x=>(g(x)?g(x).value:'').trim();
+  const ownerName=v('an-name'); if(!ownerName) return {error:'Owner name is required.'};
+  const seg=g('an-seg').value, saleDate=v('an-sd');
+  const quotes=annivReadQuoteRows('an-quotes')||annivQuotesOf(l);
+  const upd={ownerName,firstName:v('an-first'),segment:seg,agentId:g('an-ag').value,phone:v('an-ph'),email:v('an-em'),
+    propertyAddress:v('an-pa'),mailAddress:v('an-ma'),mailCity:v('an-mc'),mailState:v('an-ms').toUpperCase(),mailZip:v('an-mz'),
+    saleDate,marketValue:Number(v('an-mv'))||0,tadAccount:v('an-tad'),neighborhood:v('an-nb'),notes:v('an-nt'),
+    quotes:quotes.map(q=>({line:q.line,carrier:q.carrier,premium:q.premium,status:q.status||'open'})),
+    quotePremium:annivQuoteTotal(quotes),quoteLine:quotes[0]?quotes[0].line:'Home',quoteCarrier:quotes[0]?quotes[0].carrier:''};
+  if(saleDate&&saleDate!==l.saleDate) upd.anniversaryDate=annivNextOnOrAfter(saleDate,l.mailDate||annivToday());
+  if(g('an-nc')&&g('an-nc').checked) upd.nameCheck=firebase.firestore.FieldValue.delete();
+  return {upd,retouch:{oldName:l.ownerName,newName:ownerName,oldSeg:l.segment,newSeg:seg,oldAgent:l.agentId||'',newAgent:upd.agentId}};
+}
+// Keep the lead's open tasks in step with edits to its name, segment or producer
+async function annivRetouchTasks(id,r){
+  const changed=r.oldName!==r.newName||r.oldSeg!==r.newSeg||r.oldAgent!==r.newAgent; if(!changed) return;
+  const open=(DB.tasks||[]).filter(t=>t.anniversaryId===id&&!t.done);
+  for(let i=0;i<open.length;i+=400){
+    const b=db.batch();
+    open.slice(i,i+400).forEach(t=>{
+      const u={};
+      if(r.newAgent!==r.oldAgent) u.agentId=r.newAgent;
+      let text=t.text||'';
+      if(r.newName!==r.oldName){ u.leadName=r.newName; text=text.split(r.oldName).join(r.newName); }
+      if(t.type==='anniversary-followup'&&r.newSeg!==r.oldSeg){ u.segment=r.newSeg; text=text.split(`(${r.oldSeg})`).join(`(${r.newSeg})`); }
+      if(text!==t.text) u.text=text;
+      if(Object.keys(u).length) b.update(db.collection('tasks').doc(t.id),u);
+    });
+    await b.commit();
+  }
 }
 async function annivSaveLead(id){
   const l=annivLeadById(id); if(!l) return;
-  const g=x=>document.getElementById(x).value;
-  const agentId=g('an-ag');
-  const upd={phone:g('an-ph').trim(),email:g('an-em').trim(),agentId,notes:g('an-nt').trim(),
-             quoteLine:g('an-ql'),quoteCarrier:g('an-qc').trim(),quotePremium:Number(g('an-qp'))||0};
-  await db.collection('anniversaryLeads').doc(id).update(upd);
-  if(agentId!==(l.agentId||'')){
-    const open=(DB.tasks||[]).filter(t=>t.anniversaryId===id&&!t.done);
-    for(let i=0;i<open.length;i+=400){
-      const b=db.batch(); open.slice(i,i+400).forEach(t=>b.update(db.collection('tasks').doc(t.id),{agentId})); await b.commit();
-    }
-  }
+  const e=annivCollectEdits(l); if(e.error){ annivWarn(e.error); return; }
+  await db.collection('anniversaryLeads').doc(id).update(e.upd);
+  await annivRetouchTasks(id,e.retouch);
   toast('Lead saved'); closeModal();
 }
 
@@ -7079,7 +7141,7 @@ async function annivCancelTasks(id,reason,types){
 // Quoted leads get the agency's standard quoted follow-up sequence (Days 0–14 + scripts)
 async function annivCreateQuotedTasks(id,l){
   const steps=QUOTED_FOLLOWUP_TEMPLATES.filter(t=>!(DB.settings.disabledQuotedSteps||[]).includes(t.key));
-  const name=l.ownerName, line=l.quoteLine||'Home', today=new Date();
+  const name=l.ownerName, line=annivLinesLabel(annivQuotesOf(l)), today=new Date();
   const b=db.batch();
   steps.forEach(t=>{
     const due=new Date(today); due.setDate(today.getDate()+t.daysOut);
@@ -7099,51 +7161,62 @@ async function annivSetStage(id,stage){
   const upd={stage};
   for(let k=1;k<=idx;k++){ const key=ANNIV_STAGE_REACHED_KEY[ANNIV_STAGES[k]]; if(key&&!(l.reached||{})[key]) upd['reached.'+key]=today; }
   if(stage==='Quoted'&&!l.quotedDate) upd.quotedDate=today;
-  // Pick up any quote details typed into the open modal
-  const qp=document.getElementById('an-qp');
-  if(qp){ upd.quoteLine=document.getElementById('an-ql').value; upd.quoteCarrier=document.getElementById('an-qc').value.trim(); upd.quotePremium=Number(qp.value)||0; }
+  // Save anything edited in the open modal (details + quote lines) together with the stage change
+  let retouch=null;
+  if(document.getElementById('an-name')){
+    const e=annivCollectEdits(l); if(e.error){ annivWarn(e.error); return; }
+    Object.assign(upd,e.upd); retouch=e.retouch;
+  }
   await db.collection('anniversaryLeads').doc(id).update(upd);
+  if(retouch) await annivRetouchTasks(id,retouch);
+  const merged={...l,...upd};
   if(stage==='Quoted'&&l.stage!=='Quoted'){
     await annivCancelTasks(id,'Quoted',['anniversary-followup']);
-    await annivCreateQuotedTasks(id,{...l,...upd});
+    await annivCreateQuotedTasks(id,merged);
   } else if(l.stage==='Quoted'&&stage!=='Quoted'){
     await annivCancelTasks(id,stage,['quoted-followup']);
   }
-  logActivity('🎯','#ede9fe',`Anniversary: <b>${annivEsc(l.ownerName)}</b> → ${stage}`);
-  toast(`${l.ownerName} → ${stage}`); closeModal();
+  logActivity('🎯','#ede9fe',`Anniversary: <b>${annivEsc(merged.ownerName)}</b> → ${stage}`);
+  toast(`${merged.ownerName} → ${stage}`); closeModal();
 }
 function annivOpenSold(id){
   const l=annivLeadById(id); if(!l) return;
+  const qs=annivQuotesOf(l).filter(q=>q.status!=='lost');
   annivShowModal(`<div class="modal-title">🎉 Sold — ${annivEsc(l.ownerName)}</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">This records a Closed Won sale (source: Anniversary) so it counts on the Scoreboard and appears under Customers.</div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Line *</label><select class="form-input" id="as-line">${['Home','Bundle','Auto','Umbrella','Landlord / Dwelling Fire','Other'].map(x=>`<option${(l.quoteLine||'Home')===x?' selected':''}>${x}</option>`).join('')}</select></div>
-      <div class="form-group"><label class="form-label">Carrier</label><input class="form-input" id="as-car" value="${annivEsc(l.quoteCarrier)}"></div>
-    </div>
-    <div class="form-group"><label class="form-label">Annual Premium ($) *</label><input class="form-input" id="as-prem" type="number" value="${l.quotePremium||''}"></div>
-    <div class="modal-actions"><button class="btn btn-ghost" onclick="annivOpenLead('${id}')">Back</button><button class="btn btn-primary" onclick="annivSaveSold('${id}')">Mark Sold</button></div>`,500);
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">Check each line that sold and confirm carrier and premium. Lines left unchecked are recorded as not sold (and get the Month 3/6/9 remarket touchpoints). The sale is recorded as Closed Won (source: Anniversary), so it counts on the Scoreboard and appears under Customers.</div>
+    <div style="display:grid;grid-template-columns:auto 1.2fr 1.2fr .9fr auto;gap:6px;font-size:11px;color:var(--muted);margin-bottom:4px"><span>Sold</span><span>Line</span><span>Carrier</span><span>Annual $</span><span></span></div>
+    <div id="as-quotes">${(qs.length?qs:[{line:'Home',status:'open'}]).map(q=>annivQuoteRowHtml(q,true)).join('')}</div>
+    <button type="button" class="btn btn-ghost btn-sm" onclick="annivAddQuoteRow('as-quotes',true)">+ Add another line</button>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="annivOpenLead('${id}')">Back</button><button class="btn btn-primary" onclick="annivSaveSold('${id}')">Mark Sold</button></div>`,640);
 }
 async function annivSaveSold(id){
   const l=annivLeadById(id); if(!l) return;
-  const line=document.getElementById('as-line').value, carrier=document.getElementById('as-car').value.trim();
-  const premium=Number(document.getElementById('as-prem').value)||0;
-  if(premium<=0){ annivWarn('Enter the annual premium.'); return; }
+  const rows=annivReadQuoteRows('as-quotes')||[];
+  const sold=rows.filter(q=>q._sold&&q.premium>0), unsold=rows.filter(q=>!q._sold&&q.premium>0);
+  if(!sold.length){ annivWarn('Check at least one sold line and enter its annual premium.'); return; }
   const today=annivToday();
+  const premium=sold.reduce((s,q)=>s+q.premium,0);
+  const lineLabel=annivLinesLabel(sold);
   const fn=l.firstName||l.ownerName, ln=l.firstName?(l.lastName||''):'';
-  await db.collection('leads').add({
-    firstName:fn,lastName:ln,email:l.email||'',phone:l.phone||'',leadType:'Personal Lines',line,carrier,
+  const leadRef=await db.collection('leads').add({
+    firstName:fn,lastName:ln,email:l.email||'',phone:l.phone||'',leadType:'Personal Lines',line:sold[0].line,carrier:sold[0].carrier,
     source:'Anniversary',referralPartnerId:'',referralPartnerName:'',agentId:l.agentId||'',status:'Closed Won',premium,
     date:today,closedDate:today,quotedDate:l.quotedDate||today,
     notes:`Anniversary pipeline — ${l.batch} (${l.segment})\n${l.propertyAddress}`,
-    quotes:[],soldQuotes:[{line,carrier,premium,status:'closed-won',closedDate:today}],lostQuotes:[],
+    quotes:[],
+    soldQuotes:sold.map(q=>({line:q.line,carrier:q.carrier,premium:q.premium,status:'closed-won',closedDate:today})),
+    lostQuotes:unsold.map(q=>({line:q.line,carrier:q.carrier,premium:q.premium,status:'closed-lost',closedDate:today})),
     anniversaryRef:id,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-  const upd={stage:'Sold',soldDate:today,soldPremium:premium,soldLine:line,quoteLine:line,quoteCarrier:carrier,quotePremium:premium};
+  const upd={stage:'Sold',soldDate:today,soldPremium:premium,soldLine:lineLabel,
+    quotes:[...sold.map(q=>({line:q.line,carrier:q.carrier,premium:q.premium,status:'sold'})),...unsold.map(q=>({line:q.line,carrier:q.carrier,premium:q.premium,status:'lost'}))],
+    quotePremium:premium,quoteLine:sold[0].line,quoteCarrier:sold[0].carrier};
   ['contacting','conversation','quoted','sold'].forEach(k=>{ if(!(l.reached||{})[k]) upd['reached.'+k]=today; });
   if(!l.quotedDate) upd.quotedDate=today;
   await db.collection('anniversaryLeads').doc(id).update(upd);
   await annivCancelTasks(id,'Closed Won',['anniversary-followup','quoted-followup']);
-  logActivity('🎉','#dcfce7',`Anniversary sale: <b>${annivEsc(l.ownerName)}</b> — ${line} ${fmt$(premium)} (${annivEsc(l.batch)})`);
-  broadcastCelebration({producerName:getProducerName(l.agentId),customerName:l.ownerName,line,premium});
+  for(const q of unsold){ await createRemarketingTouchpointTasks(leadRef.id,{name:l.ownerName,line:q.line,agentId:l.agentId}); }
+  logActivity('🎉','#dcfce7',`Anniversary sale: <b>${annivEsc(l.ownerName)}</b> — ${annivEsc(lineLabel)} ${fmt$(premium)} (${annivEsc(l.batch)})`);
+  broadcastCelebration({producerName:getProducerName(l.agentId),customerName:l.ownerName,line:lineLabel,premium});
   toast('🎉 Sold! Added to Customers and the Scoreboard.'); closeModal();
 }
 
@@ -7203,12 +7276,12 @@ async function annivQuoteNotClosed(id,reason){
     const s=await tx.get(ref); if(!s.exists) return;
     const d=s.data(); if(d.stage!=='Quoted') return;
     const x=annivNextXDate(d), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
-    tx.update(ref,{stage:'Quote Not Closed',qncAt:annivToday(),qncReason:reason,xDate:x,resurfaceDate:r});
+    tx.update(ref,{quotes:annivQuotesOf(d).map(q=>({...q,status:q.status==='sold'?'sold':'lost'})),stage:'Quote Not Closed',qncAt:annivToday(),qncReason:reason,xDate:x,resurfaceDate:r});
     info={d,x,r};
   });
   if(!info){ closeModal(); return; }
   await annivCancelTasks(id,'Quote Not Closed',['anniversary-followup','quoted-followup']);
-  await createRemarketingTouchpointTasks(id,{name:info.d.ownerName,line:info.d.quoteLine||'Home',agentId:info.d.agentId});
+  await createRemarketingTouchpointTasks(id,{name:info.d.ownerName,line:annivLinesLabel(annivQuotesOf(info.d)),agentId:info.d.agentId});
   logActivity('✕','#ffedd5',`Anniversary: <b>${annivEsc(info.d.ownerName)}</b> → Quote Not Closed — in Remarketing, resurfaces ${fmtDate(info.r)}`);
   toast(`Quote Not Closed — in Remarketing, back on ${fmtDate(info.r)}`); closeModal();
 }
@@ -7254,11 +7327,11 @@ async function annivResurface(id,auto){
     const d=s.data(); if(!['Not Now','Quote Not Closed'].includes(d.stage)||d.neverContact) return;
     const today=annivToday(), cyc=(d.cycle||1)+1;
     const history=[...(d.history||[]),{cycle:d.cycle||1,batch:d.batch,wave:d.wave||null,segment:d.segment,mailDate:d.mailDate,
-      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:d.stage,reason:d.qncReason||d.notNowReason||''}];
+      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:d.stage,reason:d.qncReason||d.notNowReason||'',lines:annivQuotesOf(d).length}];
     const del=firebase.firestore.FieldValue.delete();
     const upd={stage:'Mailed',cycle:cyc,batch:annivResurfBatch(today),wave:null,mailDate:today,anniversaryDate:d.xDate,
       cadenceEnd:annivBizDay(annivAddDays(today,21)),reached:{},history,resurfacedAt:today};
-    tx.update(ref,{...upd,xDate:del,resurfaceDate:del,notNowAt:del,notNowReason:del,qncAt:del,qncReason:del,quotedDate:del,quotePremium:del,quoteCarrier:del});
+    tx.update(ref,{...upd,xDate:del,resurfaceDate:del,notNowAt:del,notNowReason:del,qncAt:del,qncReason:del,quotedDate:del,quotePremium:del,quoteCarrier:del,quoteLine:del,quotes:del});
     rec={...d,...upd,idx:annivHash(id)%50};
   });
   if(!rec) return;
@@ -7388,20 +7461,20 @@ function renderAnniversaryKPIs(){
   const el=document.getElementById('kpi-anniv-list'); if(!el) return;
   const today=annivToday(), recs=[];
   (DB.anniversaryLeads||[]).forEach(l=>{
-    (l.history||[]).forEach(h=>recs.push({batch:h.batch,segment:h.segment||l.segment,reached:h.reached||{},mailDate:h.mailDate,soldPremium:0,qnc:h.outcome==='Quote Not Closed'}));
-    recs.push({batch:l.batch,segment:l.segment,reached:l.reached||{},mailDate:l.mailDate,soldPremium:l.stage==='Sold'?Number(l.soldPremium||0):0,qnc:l.stage==='Quote Not Closed'});
+    (l.history||[]).forEach(h=>recs.push({batch:h.batch,segment:h.segment||l.segment,reached:h.reached||{},mailDate:h.mailDate,soldPremium:0,qnc:h.outcome==='Quote Not Closed',lines:h.lines||0}));
+    recs.push({batch:l.batch,segment:l.segment,reached:l.reached||{},mailDate:l.mailDate,soldPremium:l.stage==='Sold'?Number(l.soldPremium||0):0,qnc:l.stage==='Quote Not Closed',lines:annivQuotesOf(l).length});
   });
   if(!recs.length){ el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No Anniversary batches yet. Import one from Pipeline → Anniversary.</div>'; return; }
-  const blank=()=>({imported:0,mailed:0,contacted:0,conv:0,quoted:0,sold:0,qnc:0,prem:0});
-  const add=(a,r)=>{ a.imported++; if(r.mailDate&&r.mailDate<=today) a.mailed++; if(r.reached.contacting) a.contacted++; if(r.reached.conversation) a.conv++; if(r.reached.quoted) a.quoted++; if(r.reached.sold) a.sold++; if(r.qnc) a.qnc++; a.prem+=r.soldPremium; };
+  const blank=()=>({imported:0,mailed:0,contacted:0,conv:0,quoted:0,sold:0,qnc:0,lines:0,prem:0});
+  const add=(a,r)=>{ a.imported++; if(r.mailDate&&r.mailDate<=today) a.mailed++; if(r.reached.contacting) a.contacted++; if(r.reached.conversation) a.conv++; if(r.reached.quoted) a.quoted++; if(r.reached.sold) a.sold++; if(r.qnc) a.qnc++; a.lines+=r.lines||0; a.prem+=r.soldPremium; };
   const byBatch={}, byBS={}, total=blank();
   recs.forEach(r=>{ const b=r.batch||'(none)'; add(byBatch[b]=byBatch[b]||blank(),r); add(byBS[b+'|'+r.segment]=byBS[b+'|'+r.segment]||blank(),r); add(total,r); });
   const per100=a=>a.mailed?(a.quoted/a.mailed*100).toFixed(1):'—';
   const row=(label,a,sub)=>`<tr style="${sub?'color:var(--muted);font-size:12px':'font-weight:600'}">
-    <td style="padding:7px 10px;${sub?'padding-left:26px':''}">${label}</td><td>${a.imported}</td><td>${a.mailed}</td><td>${a.contacted}</td><td>${a.conv}</td><td>${a.quoted}</td><td>${a.sold}</td><td>${a.qnc}</td><td>${a.prem?fmt$(a.prem):'—'}</td><td style="font-weight:700;color:var(--teal)">${per100(a)}</td></tr>`;
+    <td style="padding:7px 10px;${sub?'padding-left:26px':''}">${label}</td><td>${a.imported}</td><td>${a.mailed}</td><td>${a.contacted}</td><td>${a.conv}</td><td>${a.quoted}</td><td>${a.lines||'—'}</td><td>${a.sold}</td><td>${a.qnc}</td><td>${a.prem?fmt$(a.prem):'—'}</td><td style="font-weight:700;color:var(--teal)">${per100(a)}</td></tr>`;
   const batches=Object.keys(byBatch).sort().reverse();
   el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead><tr><th style="text-align:left;padding:7px 10px">Batch</th><th>Imported</th><th>Mailed</th><th>Contacted</th><th>Conversations</th><th>Quoted</th><th>Sold</th><th>Quote Not Closed</th><th>Sold Premium</th><th>Quotes / 100 Mailed</th></tr></thead>
+    <thead><tr><th style="text-align:left;padding:7px 10px">Batch</th><th>Imported</th><th>Mailed</th><th>Contacted</th><th>Conversations</th><th>Quoted</th><th>Lines Quoted</th><th>Sold</th><th>Quote Not Closed</th><th>Sold Premium</th><th>Quotes / 100 Mailed</th></tr></thead>
     <tbody>${batches.map(b=>row(annivEsc(b),byBatch[b],false)+Object.keys(ANNIV_SEGMENTS).filter(s=>byBS[b+'|'+s]).map(s=>row(`${ANNIV_SEGMENTS[s].icon} ${s}`,byBS[b+'|'+s],true)).join('')).join('')}
     ${batches.length>1?row('All batches',total,false):''}</tbody></table></div>
     <div style="font-size:11px;color:var(--muted);padding:8px 10px">Contacted = reached Contacting or beyond · Conversations = reached Conversation or beyond · Mailed counts leads whose mail date has passed.</div>`;
