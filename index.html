@@ -1926,10 +1926,10 @@ function renderRemarketing(){
   }));
 
   // Anniversary leads marked Not Now wait here until ~60 days before their next anniversary
-  const clAnniv = (DB.anniversaryLeads||[]).filter(a=>a.stage==='Not Now'&&(!clAgent||a.agentId===clAgent)).map(a=>({
+  const clAnniv = (DB.anniversaryLeads||[]).filter(a=>['Not Now','Quote Not Closed'].includes(a.stage)&&(!clAgent||a.agentId===clAgent)).map(a=>({
     id:a.id, _isAnniv:true, firstName:a.ownerName||'', lastName:'', email:a.email||'',
     line:'Home — Anniversary', premium:0, agentId:a.agentId, remarketDate:a.resurfaceDate||'',
-    notes:a.notNowReason||'', date:a.notNowAt||'', status:'Anniversary Not Now', segment:a.segment||'',
+    notes:a.stage==='Quote Not Closed'?(a.qncReason||''):(a.notNowReason||''), date:a.qncAt||a.notNowAt||'', status:a.stage==='Quote Not Closed'?'Anniversary QNC':'Anniversary Not Now', segment:a.segment||'',
   }));
 
   // Combine both into one list
@@ -1952,7 +1952,7 @@ function renderRemarketing(){
       ?`<span class="badge ${du<=0?'badge-green':du<=7?'badge-amber':'badge-blue'}">${du<=0?'Ready now':du+' days'}</span>`
       :`<span style="color:var(--muted);font-size:11px">Not set</span>`;
     const typeBadge = l._isAnniv
-      ? `<span class="badge badge-amber" style="font-size:10px">🏡 Anniversary${l.segment?' — '+annivEsc(l.segment):''}</span>`
+      ? `<span class="badge ${l.status==='Anniversary QNC'?'badge-orange':'badge-amber'}" style="font-size:10px">🏡 Anniversary ${l.status==='Anniversary QNC'?'QNC':'Not Now'}${l.segment?' — '+annivEsc(l.segment):''}</span>`
       : l._isCsell
       ? `<span class="badge badge-purple" style="font-size:10px">Cross-Sell</span>`
       : l.status==='Customer Left'
@@ -6908,8 +6908,11 @@ function annivCardHtml(l,today){
       <span style="font-size:11px;font-weight:600;color:var(--teal)">${l.marketValue?fmt$(l.marketValue):''}</span>
       <div style="display:flex;align-items:center;gap:4px">
         <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
-        ${l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('annivTask',DB.anniversaryLeads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>
-        <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();annivOpenNotNow('${l.id}')" title="Not Now — resurface before next anniversary">⏸</button>`:''}
+        ${l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('annivTask',DB.anniversaryLeads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>`:''}
+        ${l.stage==='Quoted'
+          ?`<button class="btn btn-primary btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenSold('${l.id}')" title="We sold it">✓ Sold</button>
+        <button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenQNC('${l.id}')" title="Quote Not Closed — send to Remarketing">✕ QNC</button>`
+          :l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();annivOpenNotNow('${l.id}')" title="Not Now — resurface before next anniversary">⏸</button>`:''}
       </div>
     </div>
   </div>`;
@@ -6971,6 +6974,7 @@ function annivOpenLead(id){
       ${annivInfoRow('TAD account #',annivEsc(l.tadAccount))}
       ${annivInfoRow('Batch',`${annivEsc(l.batch)}${l.wave?' · Wave '+l.wave:''} · mailed ${fmtDate(l.mailDate)}${(l.cycle||1)>1?' · cycle '+l.cycle:''}`)}
       ${l.stage==='Not Now'?annivInfoRow('Not Now',`${annivEsc(l.notNowReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
+      ${l.stage==='Quote Not Closed'?annivInfoRow('Quote Not Closed',`${annivEsc(l.qncReason||'')} — resurfaces ${fmtDate(l.resurfaceDate)} (X-date ${fmtDate(l.xDate)})`):''}
     </div>
     ${active?`<div class="form-group"><label class="form-label">Stage</label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${ANNIV_STAGES.map(s=>`<button class="btn ${l.stage===s?'btn-primary':'btn-ghost'} btn-sm" onclick="annivSetStage('${id}','${s}')">${s}</button>`).join('')}</div>
@@ -6987,8 +6991,10 @@ function annivOpenLead(id){
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="an-nt" rows="3">${annivEsc(l.notes)}</textarea></div>
     <div class="modal-actions" style="flex-wrap:wrap">
-      ${active?`<button class="btn btn-ghost" onclick="annivOpenNotNow('${id}')">⏸ Not Now</button><button class="btn btn-ghost" style="color:#b91c1c" onclick="annivNeverContact('${id}')">🚫 Never Contact</button>`:''}
-      ${l.stage==='Not Now'?`<button class="btn btn-ghost" onclick="annivReturnNow('${id}')">↩ Return to Pipeline Now</button>`:''}
+      ${l.stage==='Quoted'?`<button class="btn btn-primary" onclick="annivOpenSold('${id}')">✓ Sold</button><button class="btn btn-danger" onclick="annivOpenQNC('${id}')">✕ Quote Not Closed</button>`:''}
+      ${active&&l.stage!=='Quoted'?`<button class="btn btn-ghost" onclick="annivOpenNotNow('${id}')">⏸ Not Now</button>`:''}
+      ${active||l.stage==='Not Now'||l.stage==='Quote Not Closed'?`<button class="btn btn-ghost" style="color:#b91c1c" onclick="annivNeverContact('${id}')">🚫 Never Contact</button>`:''}
+      ${l.stage==='Not Now'||l.stage==='Quote Not Closed'?`<button class="btn btn-ghost" onclick="annivReturnNow('${id}')">↩ Return to Pipeline Now</button>`:''}
       <span style="flex:1"></span>
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       <button class="btn btn-primary" onclick="annivSaveLead('${id}')">Save</button>
@@ -7119,6 +7125,41 @@ async function annivNotNow(id,reason,auto){
   logActivity('⏸','#fef3c7',`Anniversary: <b>${annivEsc(info.name)}</b> → Not Now${auto?' (cadence ended)':''} — resurfaces ${fmtDate(info.r)}`);
   if(!auto){ toast(`Moved to Not Now — back on ${fmtDate(info.r)}`); closeModal(); }
 }
+// ── QUOTE NOT CLOSED ──────────────────────────────────────────────────
+// A quoted lead we didn't sell. Leaves the board, lands in the Remarketing queue,
+// gets the standard Month 3/6/9 remarket touchpoints, and — like Not Now — comes
+// back automatically 60 days before the next anniversary.
+const ANNIV_QNC_REASONS = ['Price too high','Went with another carrier','Staying with current agent','Coverage not what they wanted','Stopped responding','Other'];
+function annivOpenQNC(id){
+  const l=annivLeadById(id); if(!l) return;
+  const x=annivNextXDate(l), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+  annivShowModal(`<div class="modal-title">✕ Quote Not Closed — ${annivEsc(l.ownerName)}</div>
+    <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.6">
+      Removes this lead from the pipeline and sends it to <b>Remarketing</b>. It gets the Month 3 / 6 / 9 remarket touchpoints and comes back automatically before its next anniversary.<br>
+      <b>Next anniversary (X-date):</b> ${fmtDate(x)}<br><b>Resurfaces:</b> ${fmtDate(r)} (${ANNIV_RESURFACE_DAYS} days before)</div>
+    <div class="form-group"><label class="form-label">Why didn't it close?</label><select class="form-input" id="qnc-reason">${ANNIV_QNC_REASONS.map(x=>`<option>${x}</option>`).join('')}</select></div>
+    <div class="form-group"><label class="form-label">Note (optional)</label><input class="form-input" id="qnc-note" placeholder="e.g. competitor was $200 cheaper"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="annivOpenLead('${id}')">Back</button><button class="btn btn-danger" onclick="annivConfirmQNC('${id}')">Mark Quote Not Closed</button></div>`,500);
+}
+function annivConfirmQNC(id){
+  const note=document.getElementById('qnc-note').value.trim(), reason=document.getElementById('qnc-reason').value;
+  annivQuoteNotClosed(id,note?`${reason} — ${note}`:reason);
+}
+async function annivQuoteNotClosed(id,reason){
+  const ref=db.collection('anniversaryLeads').doc(id); let info=null;
+  await db.runTransaction(async tx=>{
+    const s=await tx.get(ref); if(!s.exists) return;
+    const d=s.data(); if(d.stage!=='Quoted') return;
+    const x=annivNextXDate(d), r=annivAddDays(x,-ANNIV_RESURFACE_DAYS);
+    tx.update(ref,{stage:'Quote Not Closed',qncAt:annivToday(),qncReason:reason,xDate:x,resurfaceDate:r});
+    info={d,x,r};
+  });
+  if(!info){ closeModal(); return; }
+  await annivCancelTasks(id,'Quote Not Closed',['anniversary-followup','quoted-followup']);
+  await createRemarketingTouchpointTasks(id,{name:info.d.ownerName,line:info.d.quoteLine||'Home',agentId:info.d.agentId});
+  logActivity('✕','#ffedd5',`Anniversary: <b>${annivEsc(info.d.ownerName)}</b> → Quote Not Closed — in Remarketing, resurfaces ${fmtDate(info.r)}`);
+  toast(`Quote Not Closed — in Remarketing, back on ${fmtDate(info.r)}`); closeModal();
+}
 async function annivNeverContact(id){
   const l=annivLeadById(id); if(!l) return;
   if(!confirm(`Archive ${l.ownerName} as Never Contact?\n\nThey will be removed from the pipeline and will NOT resurface.`)) return;
@@ -7140,17 +7181,20 @@ async function annivResurface(id,auto){
   const ref=db.collection('anniversaryLeads').doc(id); let rec=null;
   await db.runTransaction(async tx=>{
     const s=await tx.get(ref); if(!s.exists) return;
-    const d=s.data(); if(d.stage!=='Not Now'||d.neverContact) return;
+    const d=s.data(); if(!['Not Now','Quote Not Closed'].includes(d.stage)||d.neverContact) return;
     const today=annivToday(), cyc=(d.cycle||1)+1;
     const history=[...(d.history||[]),{cycle:d.cycle||1,batch:d.batch,wave:d.wave||null,segment:d.segment,mailDate:d.mailDate,
-      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:'Not Now',reason:d.notNowReason||''}];
+      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:d.stage,reason:d.qncReason||d.notNowReason||''}];
     const del=firebase.firestore.FieldValue.delete();
     const upd={stage:'Mailed',cycle:cyc,batch:annivResurfBatch(today),wave:null,mailDate:today,anniversaryDate:d.xDate,
       cadenceEnd:annivBizDay(annivAddDays(today,21)),reached:{},history,resurfacedAt:today};
-    tx.update(ref,{...upd,xDate:del,resurfaceDate:del,notNowAt:del,notNowReason:del,quotedDate:del,quotePremium:del,quoteCarrier:del});
+    tx.update(ref,{...upd,xDate:del,resurfaceDate:del,notNowAt:del,notNowReason:del,qncAt:del,qncReason:del,quotedDate:del,quotePremium:del,quoteCarrier:del});
     rec={...d,...upd,idx:annivHash(id)%50};
   });
   if(!rec) return;
+  // Returning early? The Month 3/6/9 remarket touchpoints from a Quote Not Closed no longer apply
+  const staleTp=(DB.tasks||[]).filter(t=>t.type==='remarketing-touchpoint'&&t.leadId===id&&!t.done);
+  if(staleTp.length){ const sb=db.batch(); staleTp.forEach(t=>sb.update(db.collection('tasks').doc(t.id),{done:true,cancelledReason:'Resurfaced'})); await sb.commit(); }
   const tasks=annivBuildCadenceTasks(id,rec,{perLeadMailers:true});
   const b=db.batch(); tasks.forEach(t=>b.set(db.collection('tasks').doc(t.id),t.data)); await b.commit();
   logActivity('🔄','#ffedd5',`Anniversary: <b>${annivEsc(rec.ownerName)}</b> resurfaced for the upcoming anniversary — new cadence started`);
@@ -7171,7 +7215,7 @@ async function annivSync(){
     const today=annivToday(), leads=DB.anniversaryLeads||[];
     if(!leads.length) return;
     // resurface
-    const back=leads.filter(l=>l.stage==='Not Now'&&!l.neverContact&&l.resurfaceDate&&l.resurfaceDate<=today);
+    const back=leads.filter(l=>['Not Now','Quote Not Closed'].includes(l.stage)&&!l.neverContact&&l.resurfaceDate&&l.resurfaceDate<=today);
     let resurfaced=0;
     for(const l of back){ if(await annivResurface(l.id,true)) resurfaced++; }
     if(resurfaced) toast(`${resurfaced} Anniversary lead${resurfaced>1?'s':''} resurfaced — new cadence started`);
@@ -7274,20 +7318,20 @@ function renderAnniversaryKPIs(){
   const el=document.getElementById('kpi-anniv-list'); if(!el) return;
   const today=annivToday(), recs=[];
   (DB.anniversaryLeads||[]).forEach(l=>{
-    (l.history||[]).forEach(h=>recs.push({batch:h.batch,segment:h.segment||l.segment,reached:h.reached||{},mailDate:h.mailDate,soldPremium:0}));
-    recs.push({batch:l.batch,segment:l.segment,reached:l.reached||{},mailDate:l.mailDate,soldPremium:l.stage==='Sold'?Number(l.soldPremium||0):0});
+    (l.history||[]).forEach(h=>recs.push({batch:h.batch,segment:h.segment||l.segment,reached:h.reached||{},mailDate:h.mailDate,soldPremium:0,qnc:h.outcome==='Quote Not Closed'}));
+    recs.push({batch:l.batch,segment:l.segment,reached:l.reached||{},mailDate:l.mailDate,soldPremium:l.stage==='Sold'?Number(l.soldPremium||0):0,qnc:l.stage==='Quote Not Closed'});
   });
   if(!recs.length){ el.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">No Anniversary batches yet. Import one from Pipeline → Anniversary.</div>'; return; }
-  const blank=()=>({imported:0,mailed:0,contacted:0,conv:0,quoted:0,sold:0,prem:0});
-  const add=(a,r)=>{ a.imported++; if(r.mailDate&&r.mailDate<=today) a.mailed++; if(r.reached.contacting) a.contacted++; if(r.reached.conversation) a.conv++; if(r.reached.quoted) a.quoted++; if(r.reached.sold) a.sold++; a.prem+=r.soldPremium; };
+  const blank=()=>({imported:0,mailed:0,contacted:0,conv:0,quoted:0,sold:0,qnc:0,prem:0});
+  const add=(a,r)=>{ a.imported++; if(r.mailDate&&r.mailDate<=today) a.mailed++; if(r.reached.contacting) a.contacted++; if(r.reached.conversation) a.conv++; if(r.reached.quoted) a.quoted++; if(r.reached.sold) a.sold++; if(r.qnc) a.qnc++; a.prem+=r.soldPremium; };
   const byBatch={}, byBS={}, total=blank();
   recs.forEach(r=>{ const b=r.batch||'(none)'; add(byBatch[b]=byBatch[b]||blank(),r); add(byBS[b+'|'+r.segment]=byBS[b+'|'+r.segment]||blank(),r); add(total,r); });
   const per100=a=>a.mailed?(a.quoted/a.mailed*100).toFixed(1):'—';
   const row=(label,a,sub)=>`<tr style="${sub?'color:var(--muted);font-size:12px':'font-weight:600'}">
-    <td style="padding:7px 10px;${sub?'padding-left:26px':''}">${label}</td><td>${a.imported}</td><td>${a.mailed}</td><td>${a.contacted}</td><td>${a.conv}</td><td>${a.quoted}</td><td>${a.sold}</td><td>${a.prem?fmt$(a.prem):'—'}</td><td style="font-weight:700;color:var(--teal)">${per100(a)}</td></tr>`;
+    <td style="padding:7px 10px;${sub?'padding-left:26px':''}">${label}</td><td>${a.imported}</td><td>${a.mailed}</td><td>${a.contacted}</td><td>${a.conv}</td><td>${a.quoted}</td><td>${a.sold}</td><td>${a.qnc}</td><td>${a.prem?fmt$(a.prem):'—'}</td><td style="font-weight:700;color:var(--teal)">${per100(a)}</td></tr>`;
   const batches=Object.keys(byBatch).sort().reverse();
   el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead><tr><th style="text-align:left;padding:7px 10px">Batch</th><th>Imported</th><th>Mailed</th><th>Contacted</th><th>Conversations</th><th>Quoted</th><th>Sold</th><th>Sold Premium</th><th>Quotes / 100 Mailed</th></tr></thead>
+    <thead><tr><th style="text-align:left;padding:7px 10px">Batch</th><th>Imported</th><th>Mailed</th><th>Contacted</th><th>Conversations</th><th>Quoted</th><th>Sold</th><th>Quote Not Closed</th><th>Sold Premium</th><th>Quotes / 100 Mailed</th></tr></thead>
     <tbody>${batches.map(b=>row(annivEsc(b),byBatch[b],false)+Object.keys(ANNIV_SEGMENTS).filter(s=>byBS[b+'|'+s]).map(s=>row(`${ANNIV_SEGMENTS[s].icon} ${s}`,byBS[b+'|'+s],true)).join('')).join('')}
     ${batches.length>1?row('All batches',total,false):''}</tbody></table></div>
     <div style="font-size:11px;color:var(--muted);padding:8px 10px">Contacted = reached Contacting or beyond · Conversations = reached Conversation or beyond · Mailed counts leads whose mail date has passed.</div>`;
