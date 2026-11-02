@@ -836,6 +836,24 @@ select.form-input{cursor:pointer}
           </div>
           <div id="today-task-list"></div>
         </div>
+
+        <!-- Find tasks: searches every open task, including ones not due yet -->
+        <div class="card" style="margin-top:14px">
+          <div class="card-header">
+            <div class="card-title">🔍 Find Tasks</div>
+            <span id="task-search-count" style="font-size:11px;color:var(--muted)"></span>
+          </div>
+          <div style="display:flex;gap:8px;padding:12px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <input class="form-input" id="task-search-q" style="flex:1;min-width:200px" placeholder="Search all open tasks by lead name, task text or producer…" oninput="renderTaskSearch()">
+            <select class="form-input" id="task-search-agent" style="width:auto" onchange="renderTaskSearch()"></select>
+            <select class="form-input" id="task-search-when" style="width:auto" onchange="renderTaskSearch()">
+              <option value="">Any due date</option>
+              <option value="overdue">Overdue</option>
+              <option value="upcoming">Upcoming (not due yet)</option>
+            </select>
+          </div>
+          <div id="task-search-results"></div>
+        </div>
       </div>
 
       <!-- REPORTS -->
@@ -1115,6 +1133,9 @@ function startListeners(){
     DB.tasks=snap.docs.map(d=>({id:d.id,...d.data()}));
     DB._tasksReady=true;
     if(currentView==='tasks') renderTasks();
+    else if(currentView==='pipeline') renderPipeline();   // refresh the 📋 open-task counts on the cards
+    else if(currentView==='leads') renderLeads();
+    refreshLeadTasks();
     updateTaskBadge();
     annivSync();
   });
@@ -2752,7 +2773,7 @@ function renderLeads(){
       <td><span class="badge ${statusClass(l.status)}">${l.status}</span></td>
       <td style="font-weight:600;color:var(--teal)">${fmt$(l.premium)}</td>
       <td style="color:var(--muted)">${fmtDate(l.date)}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))">Edit</button> ${leadTasksBtn('lead',l.id)} <button class="btn btn-ghost btn-sm" onclick="openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))">+ Task</button> <button class="btn btn-danger btn-sm" onclick="deleteLead('${l.id}')">Delete</button></td>
     </tr>`).join(''):'<tr><td colspan="8" class="empty-state">No leads match your filters</td></tr>';
 }
 async function deleteLead(id){
@@ -2848,6 +2869,7 @@ function renderPipeline(){
         <span style="font-size:12px;font-weight:600;color:var(--teal)">${fmt$(i.premium)}</span>
         <div style="display:flex;align-items:center;gap:4px">
           <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(i.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(i.agentId)}</div>
+          ${i.tk?leadTasksBtn(i.tk,i.id):''}
           ${i.task?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.task}" title="Add a task for this lead">+ Task</button>`:''}
           <button class="btn btn-danger btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();${i.del}" title="Delete">🗑</button>
         </div>
@@ -2862,7 +2884,7 @@ function renderPipeline(){
       detail:[l.phone?`📞 ${annivEsc(l.phone)}`:'', l.status==='Quoted'&&l.quotedDate?ageText('Quoted',l.quotedDate):ageText('Added',l.date)].filter(Boolean).join(' · '),
       premium:l.premium, status:l.status, agentId:l.agentId,
       onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
-      task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`,
+      task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`, tk:'lead',
       del:`deleteLead('${l.id}')`
     };
   };
@@ -2894,7 +2916,7 @@ function renderPipeline(){
       detail:c.status==='Quoted'&&c.quotedDate?ageText('Quoted',c.quotedDate):'',
       premium:c.premium, status:c.status, agentId:c.agentId,
       onClick:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`,
-      task:`openModal('crossSellTask',DB.crosssells.find(x=>x.id==='${c.id}'))`,
+      task:`openModal('crossSellTask',DB.crosssells.find(x=>x.id==='${c.id}'))`, tk:'crosssell',
       del:`deleteCrossSell('${c.id}')`
     }))
   ];
@@ -3764,11 +3786,102 @@ function renderTasks(){
       : '<div class="empty-state" style="padding:20px">🎉 Nothing overdue — nice work!</div>';
     todayEl.innerHTML = dueToday.length ? dueToday.map(taskRowHtml).join('')
       : '<div class="empty-state" style="padding:20px">✅ Nothing due today.</div>';
+    renderTaskSearch();
   } catch(e){
     console.error('Tasks error:', e);
     const el = document.getElementById('overdue-task-list');
     if(el) el.innerHTML = `<div style="color:red;padding:16px">Tasks error: ${e.message}</div>`;
   }
+}
+// ── OPEN TASKS PER LEAD + TASK SEARCH ─────────────────────────────────
+// A task points at its lead through leadId (leads), crossSellId (cross-sell opps) or
+// anniversaryId (Anniversary leads) — quoted/remarketing tasks on Anniversary leads set two of them.
+function taskLeadKeys(t){ return [...new Set([t.leadId,t.crossSellId,t.anniversaryId].filter(Boolean))]; }
+let _openCountCache = {src:null, map:{}};
+function openTaskCounts(){
+  if(_openCountCache.src!==DB.tasks){
+    const map={};
+    (DB.tasks||[]).forEach(t=>{ if(!t.done) taskLeadKeys(t).forEach(k=>{ map[k]=(map[k]||0)+1; }); });
+    _openCountCache={src:DB.tasks,map};
+  }
+  return _openCountCache.map;
+}
+function leadOpenTasks(id){
+  return (DB.tasks||[]).filter(t=>!t.done && taskLeadKeys(t).includes(id))
+    .sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
+}
+function leadTasksBtn(kind,id){
+  const n=openTaskCounts()[id]||0;
+  return `<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px${n?'':';opacity:.55'}" onclick="event.stopPropagation();showLeadTasks('${kind}','${id}')" title="${n?n+' open task'+(n===1?'':'s')+' for this lead':'No open tasks for this lead'}">📋 ${n}</button>`;
+}
+let leadTasksOpen = null;
+function leadTasksName(kind,id){
+  if(kind==='crosssell'){ const c=DB.crosssells.find(x=>x.id===id); return c?(c.customerName||''):''; }
+  if(kind==='anniversary'){ const a=DB.anniversaryLeads.find(x=>x.id===id); return a?(a.ownerName||''):''; }
+  const l=DB.leads.find(x=>x.id===id); return l?`${l.firstName||''} ${l.lastName||''}`.trim():'';
+}
+function leadTasksHtml(kind,id){
+  const todayStr=new Date().toISOString().slice(0,10);
+  const tasks=leadOpenTasks(id);
+  const group=(label,color,list)=>list.length?`<div style="font-size:11px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.04em;padding:10px 12px 4px">${label} (${list.length})</div>${list.map(taskRowHtml).join('')}`:'';
+  const overdue=tasks.filter(t=>t.due&&t.due<todayStr), today=tasks.filter(t=>!t.due||t.due===todayStr), later=tasks.filter(t=>t.due&&t.due>todayStr);
+  return `<div id="lead-tasks-modal">
+    <div class="modal-title">📋 Open Tasks — ${annivEsc(leadTasksName(kind,id))}</div>
+    <div style="max-height:60vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+      ${tasks.length?group('Overdue','#ef4444',overdue)+group('Due today','#0ea5a0',today)+group('Upcoming','#64748b',later)
+        :'<div class="empty-state" style="padding:24px">✅ No open tasks for this lead.</div>'}
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="openModal('${kind==='crosssell'?'crossSellTask':kind==='anniversary'?'annivTask':'leadTask'}',${kind==='crosssell'?'DB.crosssells':kind==='anniversary'?'DB.anniversaryLeads':'DB.leads'}.find(x=>x.id==='${id}'))">+ Add Task</button></div>
+  </div>`;
+}
+function showLeadTasks(kind,id){
+  leadTasksOpen={kind,id};
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('modal-content').innerHTML=leadTasksHtml(kind,id);
+  const m=document.querySelector('#overlay .modal'); if(m) m.style.width='760px';
+}
+// Keeps the popup in step when a task is completed/snoozed/deleted from inside it
+function refreshLeadTasks(){
+  if(!leadTasksOpen) return;
+  if(!document.getElementById('lead-tasks-modal')){ leadTasksOpen=null; return; }
+  document.getElementById('modal-content').innerHTML=leadTasksHtml(leadTasksOpen.kind,leadTasksOpen.id);
+}
+
+// Find Tasks card on the Tasks tab — unlike Overdue / Due Today, this searches every open task,
+// including ones scheduled for the future.
+function renderTaskSearch(){
+  const qEl=document.getElementById('task-search-q'), out=document.getElementById('task-search-results');
+  if(!qEl||!out) return;
+  const agentSel=document.getElementById('task-search-agent');
+  if(agentSel && agentSel.options.length!==DB.producers.length+1){
+    const cur=agentSel.value;
+    agentSel.innerHTML='<option value="">All producers</option>'+DB.producers.map(p=>`<option value="${p.id}">${annivEsc(p.name)}</option>`).join('');
+    agentSel.value=cur;
+  }
+  const agent=agentSel?agentSel.value:'', when=document.getElementById('task-search-when').value;
+  const terms=qEl.value.toLowerCase().split(/\s+/).filter(Boolean);
+  const todayStr=new Date().toISOString().slice(0,10);
+  const open=(DB.tasks||[]).filter(t=>!t.done);
+  const countEl=document.getElementById('task-search-count');
+  if(!terms.length && !agent && !when){
+    const upcoming=open.filter(t=>t.due&&t.due>todayStr).length;
+    if(countEl) countEl.textContent=`${open.length} open · ${upcoming} not due yet`;
+    out.innerHTML='<div class="empty-state" style="padding:20px">Type a lead name or keyword above to see every open task, including ones not due yet.</div>';
+    return;
+  }
+  const hits=open.filter(t=>{
+    if(agent && t.agentId!==agent) return false;
+    if(when==='overdue' && !(t.due&&t.due<todayStr)) return false;
+    if(when==='upcoming' && !(t.due&&t.due>todayStr)) return false;
+    const hay=[t.text,t.leadName,t.partnerName,t.batch,getProducerName(t.agentId)].join(' ').toLowerCase();
+    return terms.every(w=>hay.includes(w));
+  }).sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
+  const LIMIT=100;
+  if(countEl) countEl.textContent=`${hits.length} match${hits.length===1?'':'es'}`;
+  out.innerHTML=hits.length
+    ? hits.slice(0,LIMIT).map(taskRowHtml).join('')+(hits.length>LIMIT?`<div style="padding:10px 12px;font-size:12px;color:var(--muted)">Showing the first ${LIMIT} — narrow the search to see the rest.</div>`:'')
+    : '<div class="empty-state" style="padding:20px">No open tasks match.</div>';
 }
 async function toggleTask(id){ const t=DB.tasks.find(t=>t.id===id); if(t) await db.collection('tasks').doc(id).update({done:!t.done}); }
 async function deleteTask(id){ if(!confirm('Delete?'))return; await db.collection('tasks').doc(id).delete(); toast('Task removed'); }
@@ -6986,6 +7099,7 @@ function annivCardHtml(l,today){
       <span style="font-size:11px;font-weight:600;color:var(--teal)">${l.marketValue?fmt$(l.marketValue):''}</span>
       <div style="display:flex;align-items:center;gap:4px">
         <div style="width:20px;height:20px;border-radius:50%;background:${agentColor(l.agentId)};display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff">${agentInitials(l.agentId)}</div>
+        ${leadTasksBtn('anniversary',l.id)}
         ${l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('annivTask',DB.anniversaryLeads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>`:''}
         ${l.stage==='Quoted'
           ?`<button class="btn btn-primary btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenSold('${l.id}')" title="We sold it">✓ Sold</button>
