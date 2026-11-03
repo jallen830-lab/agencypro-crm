@@ -1675,6 +1675,7 @@ async function moveToWinback(id){
   await db.collection('leads').doc(id).update({
     status:      'New',
     leadType:    'Winback',
+    stageDate:   new Date().toISOString().slice(0,10),
     priorStatus: '',
     closedDate:  '',   // clear so it doesn't count toward old production
   });
@@ -2881,7 +2882,7 @@ function renderPipeline(){
     return {
       id:l.id, name:`${l.firstName||''} ${l.lastName||''}`.trim(), company:l.companyName,
       pills:[...lines.slice(0,3).map(linePill), l.source?pill(l.source,'#f1f5f9','#475569'):'', tagPill(TYPE_TAG[l.leadType])].join(''),
-      detail:[l.phone?`📞 ${annivEsc(l.phone)}`:'', l.status==='Quoted'&&l.quotedDate?ageText('Quoted',l.quotedDate):ageText('Added',l.date)].filter(Boolean).join(' · '),
+      detail:[l.phone?`📞 ${annivEsc(l.phone)}`:'', ageText(l.status==='New'?'Added':l.status, l.stageDate||(l.status==='Quoted'&&l.quotedDate)||l.date)].filter(Boolean).join(' · '),
       premium:l.premium, status:l.status, agentId:l.agentId,
       onClick:`openModal('lead',DB.leads.find(x=>x.id==='${l.id}'))`,
       task:`openModal('leadTask',DB.leads.find(x=>x.id==='${l.id}'))`, tk:'lead',
@@ -4348,6 +4349,9 @@ async function saveLead(id){
   const isLeavingQuoted = prevStatus==='Quoted' && ['Closed Won','Closed Lost','Quote Not Closed'].includes(data.status);
   if(isNowClosed) data.closedDate = todayISO;
   if(isNowQuoted) data.quotedDate = todayISO;
+  // Stamp when the lead entered its current stage (drives the age counter on pipeline cards)
+  if(!id) data.stageDate = data.date || todayISO;
+  else if(data.status!==prevStatus) data.stageDate = todayISO;
   // If moving away from Closed Won, clear closedDate
   if(id && prevStatus==='Closed Won' && data.status!=='Closed Won') data.closedDate = '';
 
