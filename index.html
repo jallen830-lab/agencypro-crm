@@ -509,6 +509,9 @@ select.form-input{cursor:pointer}
           <button class="pipeline-tab active" id="ptab-newleads" onclick="switchPipelineTab(&#39;newleads&#39;)">
             🏠 Personal Lines <span class="ptab-count" id="ptab-newleads-count"></span>
           </button>
+          <button class="pipeline-tab" id="ptab-remarketing" onclick="switchPipelineTab(&#39;remarketing&#39;)">
+            🔁 Remarketing <span class="ptab-count" id="ptab-remarketing-count"></span>
+          </button>
           <button class="pipeline-tab" id="ptab-life" onclick="switchPipelineTab(&#39;life&#39;)">
             🛡 Life Insurance <span class="ptab-count" id="ptab-life-count"></span>
           </button>
@@ -520,7 +523,7 @@ select.form-input{cursor:pointer}
           </button>
         </div>
 
-        <!-- PERSONAL LINES board (Personal Lines + Winbacks + Quote Not Closed + Cross-Sell) -->
+        <!-- PERSONAL LINES board (Personal Lines + Cross-Sell) -->
         <div id="ps-newleads">
           <div class="pipeline-section-header" style="background:linear-gradient(90deg,#3b82f6,#60a5fa)">
             <span>🏠 Personal Lines</span>
@@ -530,6 +533,16 @@ select.form-input{cursor:pointer}
             <button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:#fff;border:none" onclick="openModal(&#39;crosssell&#39;)">+ Cross-Sell Opp</button>
           </div>
           <div class="pipeline-wrap" id="pipeline-newleads"></div>
+        </div>
+
+        <!-- REMARKETING board (Winback + Quote Not Closed leads that came back from remarketing) -->
+        <div id="ps-remarketing" style="display:none">
+          <div class="pipeline-section-header" style="background:linear-gradient(90deg,#7c3aed,#a78bfa)">
+            <span>🔁 Remarketing</span>
+            <span id="ps-remarketing-count" class="ps-count"></span>
+            <span id="ps-remarketing-total" class="ps-total"></span>
+          </div>
+          <div class="pipeline-wrap" id="pipeline-remarketing"></div>
         </div>
 
         <!-- LIFE INSURANCE board -->
@@ -2808,13 +2821,13 @@ const STAGE_BG={New:'#dbeafe',Contacted:'#fef3c7',Quoted:'#ede9fe','Closed Won':
 let activePipelineTab = 'newleads';
 
 function switchPipelineTab(tab){
-  if(!['newleads','life','commercial','anniversary'].includes(tab)) tab = 'newleads';
+  if(!['newleads','remarketing','life','commercial','anniversary'].includes(tab)) tab = 'newleads';
   activePipelineTab = tab;
-  ['newleads','life','commercial','anniversary'].forEach(t=>{
+  ['newleads','remarketing','life','commercial','anniversary'].forEach(t=>{
     const btn = document.getElementById('ptab-'+t);
     if(btn) btn.className = 'pipeline-tab' + (t===tab?' active':'');
   });
-  ['ps-newleads','ps-life','ps-commercial','ps-anniversary'].forEach(id=>{
+  ['ps-newleads','ps-remarketing','ps-life','ps-commercial','ps-anniversary'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.style.display = id==='ps-'+tab ? 'block' : 'none';
   });
@@ -2828,9 +2841,11 @@ function renderPipeline(){
 
   // Exclude Closed Won (Customers), Closed Lost, QNC, Customer Left, Uncontacted from pipeline
   const excl = l => !['Closed Lost','Closed Won','Customer Left','Quote Not Closed','Uncontacted'].includes(l.status);
-  // Personal Lines board now absorbs Winback, Quote Not Closed and Cross Sale lead types
-  const PL_LEAD_TYPES = ['Personal Lines','Winback','Quote Not Closed','Cross Sale'];
+  // Winback and Quote Not Closed leads (back from remarketing) get their own Remarketing board
+  const RM_LEAD_TYPES = ['Winback','Quote Not Closed'];
+  const PL_LEAD_TYPES = ['Personal Lines','Cross Sale'];
   const plLeads    = allLeads.filter(l=>(!l.leadType||PL_LEAD_TYPES.includes(l.leadType))&&excl(l));
+  const rmLeads    = allLeads.filter(l=>RM_LEAD_TYPES.includes(l.leadType)&&excl(l));
   const lifeLeads  = allLeads.filter(l=>l.leadType==='Life Insurance'&&excl(l));
   const commLeads  = allLeads.filter(l=>l.leadType==='Commercial'&&excl(l));
   // Existing-customer cross-sell opportunities (separate collection) also live on the PL board
@@ -2843,6 +2858,7 @@ function renderPipeline(){
   // Update tab counts
   const tc = (id,n)=>{ const el=document.getElementById(id); if(el) el.textContent=n; };
   tc('ptab-newleads-count',  plLeads.length + csOpps.length);
+  tc('ptab-remarketing-count',rmLeads.length);
   tc('ptab-life-count',      lifeLeads.length);
   tc('ptab-commercial-count',commLeads.length);
 
@@ -2905,7 +2921,8 @@ function renderPipeline(){
         </div></div>`;}).join('');
   }
 
-  buildBoard(lifeLeads, 'pipeline-life',      'ps-life-count',      'ps-life-total');
+  buildBoard(rmLeads,   'pipeline-remarketing','ps-remarketing-count','ps-remarketing-total');
+  buildBoard(lifeLeads, 'pipeline-life',     'ps-life-count',      'ps-life-total');
   buildBoard(commLeads, 'pipeline-commercial','ps-commercial-count','ps-commercial-total');
 
   // ── Merged Personal Lines board: PL/Winback/QNC/Cross-Sale leads + cross-sell opps ──
