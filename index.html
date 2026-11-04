@@ -7123,7 +7123,7 @@ function annivCardHtml(l,today){
         ${leadTasksBtn('anniversary',l.id)}
         ${l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();openModal('annivTask',DB.anniversaryLeads.find(x=>x.id==='${l.id}'))" title="Add a task for this lead">+ Task</button>`:''}
         ${l.stage==='Quoted'
-          ?`<button class="btn btn-primary btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenSold('${l.id}')" title="We sold it">✓ Sold</button>
+          ?`<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:11px;border:1px solid var(--green);color:#15803d;background:#fff" onclick="event.stopPropagation();annivOpenSold('${l.id}')" title="Click to mark this lead as Sold">Mark Sold</button>
         <button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();annivOpenQNC('${l.id}')" title="Quote Not Closed — send to Remarketing">✕ QNC</button>`
           :l.stage!=='Sold'?`<button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:11px" onclick="event.stopPropagation();annivOpenNotNow('${l.id}')" title="Not Now — resurface before next anniversary">⏸</button>`:''}
       </div>
