@@ -145,6 +145,28 @@ const expandQ   = l => {
 // that here so the two stay in sync.
 const expandCSQ = cs => ({ name: cs.customerName||'', agentId: cs.agentId, line: cs.line||'Other', premium: cs.premium||0 });
 
+// Anniversary-pipeline quotes. Leads in `anniversaryLeads` that were quoted but
+// not sold never reach `leads`, so they'd be missing from every Quotes count.
+// Sold ones are skipped: index.html's annivSaveSold writes a Closed Won record
+// into `leads` (with quotedDate + every quote line), which is already counted.
+// Finished cycles in `history` count too (see annivResurface in index.html).
+// Mirrors annivKpiQuoteRows() in index.html — keep the two in sync.
+const annivQuoteRows = anniv => {
+  const rows = [];
+  const push = (l, date, qs) => {
+    if (!date) return;
+    const name = l.ownerName || '';
+    const list = (qs && qs.length) ? qs : [{line: l.quoteLine || 'Home'}];
+    list.forEach(q => rows.push({name, agentId: l.agentId, line: q.line || 'Home', premium: q.premium || 0, date}));
+  };
+  anniv.forEach(l => {
+    (l.history || []).forEach(h => push(l, h.quotedDate, h.quotes));
+    if (l.stage !== 'Sold') push(l, l.quotedDate, Array.isArray(l.quotes) ? l.quotes : []);
+  });
+  return rows;
+};
+const inRange = (iso, s, e) => { const d = new Date(iso + 'T00:00:00'); return d >= s && d <= e; };
+
 // ── MAIN ──────────────────────────────────────────────────────────────
 export default async function handler() {
   console.log('[daily-kpi-report] Starting...');
@@ -158,12 +180,14 @@ export default async function handler() {
   if (!projectId || !apiKey)  throw new Error('Missing Firebase env vars');
   if (!resendKey)             throw new Error('Missing RESEND_API_KEY');
 
-  const [leads, producers, crosssells, settings] = await Promise.all([
+  const [leads, producers, crosssells, settings, anniversary] = await Promise.all([
     firestoreGet(projectId, apiKey, 'leads'),
     firestoreGet(projectId, apiKey, 'producers'),
     firestoreGet(projectId, apiKey, 'crosssells'),
     firestoreGetDoc(projectId, apiKey, 'settings/agency'),
+    firestoreGet(projectId, apiKey, 'anniversaryLeads').catch(e => { console.warn('[kpi] anniversaryLeads unavailable — quotes will exclude them:', e.message); return []; }),
   ]);
+  const annivRows = annivQuoteRows(anniversary);
   const csQuoted = crosssells.filter(cs => cs.quotedDate);
 
   const getProd = id => producers.find(p=>p.id===id)?.name || 'Unassigned';
@@ -178,7 +202,8 @@ export default async function handler() {
   // ── TODAY ──
   const tqLeads = leads.filter(l => l.quotedDate === today);
   const tqRows  = tqLeads.flatMap(expandQ)
-    .concat(csQuoted.filter(cs => cs.quotedDate === today).map(expandCSQ));
+    .concat(csQuoted.filter(cs => cs.quotedDate === today).map(expandCSQ))
+    .concat(annivRows.filter(q => q.date === today));
   const tSold   = allSold.filter(q => q.closedDate === today);
   const tPol    = tSold.length;
   const tPrem   = tSold.reduce((s,q)=>s+Number(q.premium||0),0);
@@ -201,7 +226,8 @@ export default async function handler() {
     .concat(csQuoted.filter(cs => {
       const qd = new Date(cs.quotedDate+'T00:00:00');
       return qd>=folio.periodStart&&qd<=folio.periodEnd;
-    }).map(expandCSQ));
+    }).map(expandCSQ))
+    .concat(annivRows.filter(q => inRange(q.date, folio.periodStart, folio.periodEnd)));
   const fSold   = allSold.filter(q => {
     if (!q.closedDate) return false;
     const d = new Date(q.closedDate+'T00:00:00');

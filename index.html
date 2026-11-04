@@ -2310,11 +2310,14 @@ function renderKPIs(){
     };
   }
   const crossSellQuotes = (DB.crosssells||[]).filter(cs => cs.quotedDate);
+  // Anniversary-pipeline quotes that haven't sold yet (sold ones are already in `leads`)
+  const annivRows = annivKpiQuoteRows();
 
   // ── TODAY ──
   const todayLeads = allLeads.filter(l => wasQuotedOn(l, today));
   const todayRows  = todayLeads.flatMap(expandQuotes)
-    .concat(crossSellQuotes.filter(cs => cs.quotedDate === today).map(expandCrossSellQuote));
+    .concat(crossSellQuotes.filter(cs => cs.quotedDate === today).map(expandCrossSellQuote))
+    .concat(annivRows.filter(q => q.quotedDate === today));
   const todayByProd = {};
   producers.forEach(p => { todayByProd[p.id] = []; });
   todayByProd['__unassigned'] = [];
@@ -2340,7 +2343,11 @@ function renderKPIs(){
     .concat(crossSellQuotes.filter(cs => {
       const qd = new Date(cs.quotedDate + 'T00:00:00');
       return qd >= folio.periodStart && qd <= folioEnd;
-    }).map(expandCrossSellQuote));
+    }).map(expandCrossSellQuote))
+    .concat(annivRows.filter(q => {
+      const qd = new Date(q.quotedDate + 'T00:00:00');
+      return qd >= folio.periodStart && qd <= folioEnd;
+    }));
   const folioByProd = {};
   producers.forEach(p => { folioByProd[p.id] = []; });
   folioByProd['__unassigned'] = [];
@@ -2478,7 +2485,8 @@ function sendDailyReport(){
 
     // ── TODAY ──
     const todayQuotedLeads  = allLeads.filter(l=>l.quotedDate===today);
-    const todayQuoteRows    = todayQuotedLeads.flatMap(expandQ);
+    const annivRows         = annivKpiQuoteRows();
+    const todayQuoteRows    = todayQuotedLeads.flatMap(expandQ).concat(annivRows.filter(q=>q.quotedDate===today));
     const todaySoldEntries  = allSoldEntries.filter(e=>e.closedDate===today);
     const todayPolicies     = todaySoldEntries.length;
     const todayPremium      = todaySoldEntries.reduce((s,e)=>s+Number(e.premium||0),0);
@@ -2496,7 +2504,7 @@ function sendDailyReport(){
       if(['Quoted','Closed Won','Quote Not Closed','Closed Lost'].includes(l.status)){const ld=new Date((l.date||'')+'T00:00:00');return ld>=folio.periodStart&&ld<=folioEnd;}
       return false;
     });
-    const folioQuoteRows = folioQuotedLeads.flatMap(expandQ);
+    const folioQuoteRows = folioQuotedLeads.flatMap(expandQ).concat(annivRows.filter(q=>{const qd=new Date(q.quotedDate+'T00:00:00');return qd>=folio.periodStart&&qd<=folioEnd;}));
 
     // ── PRODUCER ROWS ──
     const prodData = {};
@@ -7177,6 +7185,25 @@ function annivQuotesOf(l){
   if(l.quotePremium||l.quoteCarrier) return [{line:l.quoteLine||'Home',carrier:l.quoteCarrier||'',premium:Number(l.quotePremium)||0,status:'open'}];
   return [];
 }
+// Quote rows for the KPI Quotes counts (KPI page + emailed report), shaped like
+// expandQuotes() output: one row per quote line, dated by the lead's quotedDate.
+// Sold leads are skipped on purpose — annivSaveSold writes a Closed Won record into
+// `leads` (with quotedDate + all quote lines), which the main KPI code already counts.
+// Finished cycles in `history` count too, so a resurfaced lead's earlier quote isn't lost.
+function annivKpiQuoteRows(){
+  const rows=[];
+  const push=(l,date,qs)=>{
+    if(!date) return;
+    (qs.length?qs:[{line:l.quoteLine||'Home'}]).forEach(q=>rows.push({
+      leadId:l.id,leadName:l.ownerName||'',agentId:l.agentId,line:q.line||'Home',carrier:q.carrier||'',
+      premium:q.premium||0,quotedDate:date,date}));
+  };
+  (DB.anniversaryLeads||[]).forEach(l=>{
+    (l.history||[]).forEach(h=>push(l,h.quotedDate,h.quotes||[]));
+    if(l.stage!=='Sold') push(l,l.quotedDate,annivQuotesOf(l));
+  });
+  return rows;
+}
 function annivQuoteTotal(qs){ return qs.filter(q=>q.status!=='lost').reduce((s,q)=>s+(Number(q.premium)||0),0); }
 function annivLinesLabel(qs){ const u=[...new Set(qs.map(q=>q.line).filter(Boolean))]; return u.length?u.join(' + '):'Home'; }
 function annivQuoteRowHtml(q,withSold){
@@ -7490,7 +7517,7 @@ async function annivResurface(id,auto){
     const d=s.data(); if(!['Not Now','Quote Not Closed'].includes(d.stage)||d.neverContact) return;
     const today=annivToday(), cyc=(d.cycle||1)+1;
     const history=[...(d.history||[]),{cycle:d.cycle||1,batch:d.batch,wave:d.wave||null,segment:d.segment,mailDate:d.mailDate,
-      anniversaryDate:d.anniversaryDate,reached:d.reached||{},outcome:d.stage,reason:d.qncReason||d.notNowReason||'',lines:annivQuotesOf(d).length}];
+      anniversaryDate:d.anniversaryDate,reached:d.reached||{},quotedDate:d.quotedDate||null,quotes:annivQuotesOf(d).map(q=>({line:q.line||'Home',carrier:q.carrier||'',premium:q.premium||0})),outcome:d.stage,reason:d.qncReason||d.notNowReason||'',lines:annivQuotesOf(d).length}];
     const del=firebase.firestore.FieldValue.delete();
     const upd={stage:'Mailed',cycle:cyc,batch:annivResurfBatch(today),wave:null,mailDate:today,anniversaryDate:d.xDate,
       cadenceEnd:annivBizDay(annivAddDays(today,21)),reached:{},history,resurfacedAt:today};
