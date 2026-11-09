@@ -1111,6 +1111,9 @@ function startListeners(){
   db.collection('leads').onSnapshot(snap=>{
     DB.leads=snap.docs.map(d=>({id:d.id,...d.data()}));
     autoMoveRemarketedLeads(); // check if any Closed Lost leads hit their remarket date
+    migrateCrossSellsToLeads(); // move legacy cross-sell opps into real leads (no-op once done)
+    if(typeof updateCrossSellBadge==='function') updateCrossSellBadge();
+    if(currentView==='crosssell') renderCrossSell();
     if(currentView==='leads') renderLeads();
     if(currentView==='pipeline') renderPipeline();
     if(currentView==='customers') renderCustomers();
@@ -1166,6 +1169,7 @@ function startListeners(){
     if(currentView==='pipeline') renderPipeline();
     if(currentView==='remarketing') renderRemarketing();
     if(currentView==='kpis') renderKPIs();
+    migrateCrossSellsToLeads();
     updateCrossSellBadge();
     updateRemarketBadge();
     updatePipelineBadge();
@@ -1605,7 +1609,8 @@ function renderCustomers(){
     const totalPrem = policies.length
       ? policies.reduce((s,p)=>s+annualize(p.premium,p.line),0)
       : annualize(l.premium, l.line);
-    const openCrossSells = DB.crosssells.filter(c=>c.customerId===l.id&&!['Closed Won','Closed Lost'].includes(c.status)).length;
+    const openCrossSells = DB.crosssells.filter(c=>c.customerId===l.id&&!['Closed Won','Closed Lost'].includes(c.status)).length
+      + DB.leads.filter(x=>x.crossSellRef===l.id&&isCrossSellLead(x)&&['New','Contacted','Quoted'].includes(x.status)).length;
     const isExisting = l.customerType==='existing';
     const typeBadge = isExisting
       ? `<span class="badge badge-gray" title="Imported existing customer">Existing</span>`
@@ -2187,7 +2192,9 @@ function renderKPIs(){
   // ── NEW LEADS ── genuine new prospects only — excludes existing-customer
   // file conversions and cross-sell production records (customerType set),
   // counted by the lead's Date field (same field shown/edited on the lead form).
-  const isGenuineLead = l => !l.customerType;
+  // Cross-sell leads (crossSellRef) are existing customers, so they stay out of
+  // New Leads — but their quotes DO count in the Quotes KPIs below.
+  const isGenuineLead = l => !l.customerType && !l.crossSellRef;
 
   const newLeadsToday = allLeads.filter(l => isGenuineLead(l) && l.date === today);
   const leadsByProdToday = {};
@@ -2817,6 +2824,7 @@ async function deleteCustomerRecord(id){
   DB.renewals.filter(r=>r.leadId===id).forEach(r=>batch.delete(db.collection('renewals').doc(r.id)));
   // Delete any associated cross-sells
   DB.crosssells.filter(c=>c.customerId===id).forEach(c=>batch.delete(db.collection('crosssells').doc(c.id)));
+  DB.leads.filter(x=>x.crossSellRef===id&&isCrossSellLead(x)).forEach(x=>batch.delete(db.collection('leads').doc(x.id)));
   await batch.commit();
   logActivity('🗑','#fee2e2',`Customer file deleted: <b>${name}</b>`);
   toast(`${name}'s file deleted`);
@@ -4138,7 +4146,7 @@ function leadForm(d, defaultLeadType){
         <select class="form-input" id="l-lt" onchange="toggleCommercialFields()">${['Personal Lines','Winback','Quote Not Closed','Life Insurance','Commercial','Cross Sale'].map(x=>`<option${lt===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label class="form-label">Lead Source</label>
-        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Building Permit','Neighborhood Farming','Anniversary'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="l-src" onchange="toggleReferralPartnerField()">${['Referral','Internet','Walk-In','Cold Call','Social','Quote Not Closed','Building Permit','Neighborhood Farming','Anniversary','Cross Sale'].map(x=>`<option${ed&&d.source===x?' selected':(!ed&&x==='Referral'?' selected':'')}>${x}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-row" id="referral-partner-row" style="display:${(ed?d.source:'Referral')==='Referral'?'flex':'none'}">
@@ -4410,6 +4418,13 @@ async function saveLead(id){
   // Newly Closed Won — celebrate for everyone currently in the CRM
   if(isNowClosed){
     broadcastCelebration({producerName:getProducerName(data.agentId), customerName:`${fn} ${ln}`, line:data.line, premium:data.premium});
+  }
+
+  // Cross-sell lead that just won a quote → add the policy to the customer's file
+  if(prevLead?.crossSellRef && savedId){
+    const wonNow = newlyWonQuotes.length ? newlyWonQuotes
+      : (isNowClosed && !(prevLead.soldQuotes||[]).length ? remainingQuotes : []);
+    if(wonNow.length) await addCrossSellPoliciesToCustomer(prevLead.crossSellRef, `${fn} ${ln}`, wonNow, todayISO);
   }
 
   // First time this lead is linked to a referral partner, log it in that
@@ -5323,7 +5338,8 @@ function openCrossSellForCustomer(customerId){
 
 // ── CROSS-SELL PIPELINE ──
 function updateCrossSellBadge(){
-  const open = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status)).length;
+  const open = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status)).length
+    + DB.leads.filter(l=>isCrossSellLead(l)&&['New','Contacted','Quoted'].includes(l.status)).length;
   const el=document.getElementById('crosssell-badge');
   if(el){ el.textContent=open; el.style.display=open?'inline':'none'; }
 }
@@ -5335,10 +5351,18 @@ function renderCrossSell(){
 
   const af = document.getElementById('cs-filter-agent')?.value||'';
   const sf = document.getElementById('cs-filter-status')?.value||'';
-  const list = DB.crosssells.filter(c=>(!af||c.agentId===af)&&(!sf||c.status===sf)).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  // Cross-sell leads (real leads linked to a customer) + legacy crosssells docs, one list.
+  // Cross-sell leads are tagged isLead so Edit/Delete go through the normal lead modal.
+  const csLeads = DB.leads.filter(isCrossSellLead).map(l=>({
+    id:l.id, isLead:true, customerId:l.crossSellRef, customerName:`${l.firstName||''} ${l.lastName||''}`.trim(),
+    line:l.line, carrier:l.carrier, premium:l.premium, status:l.status, agentId:l.agentId, notes:l.notes,
+    createdAt:l.createdAt?.toMillis?l.createdAt.toMillis():0,
+  }));
+  const allCS = [...csLeads, ...DB.crosssells];
+  const list = allCS.filter(c=>(!af||c.agentId===af)&&(!sf||c.status===sf)).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
-  const open   = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status));
-  const won    = DB.crosssells.filter(c=>c.status==='Closed Won');
+  const open   = allCS.filter(c=>!['Closed Won','Closed Lost'].includes(c.status));
+  const won    = allCS.filter(c=>c.status==='Closed Won');
   const potPrem= open.reduce((s,c)=>s+Number(c.premium||0),0);
   const wonPrem= won.reduce((s,c)=>s+Number(c.premium||0),0);
 
@@ -5367,8 +5391,8 @@ function renderCrossSell(){
       <td><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:${agentColor(c.agentId)};display:inline-block"></span>${agentName(c.agentId)}</span></td>
       <td style="font-size:12px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.notes||'—'}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-ghost btn-sm" onclick="openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))">Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteCrossSell('${c.id}')">✕</button>
+        <button class="btn btn-ghost btn-sm" onclick="${c.isLead?`openModal('lead',DB.leads.find(x=>x.id==='${c.id}'))`:`openModal('crosssell',DB.crosssells.find(x=>x.id==='${c.id}'))`}">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="${c.isLead?`deleteLead('${c.id}')`:`deleteCrossSell('${c.id}')`}">✕</button>
       </td>
     </tr>`;}).join('')
   : '<tr><td colspan="9" class="empty-state" style="padding:32px">No cross-sell opportunities yet — add one to get started</td></tr>';
@@ -5401,7 +5425,7 @@ function crossSellForm(d){
         <input class="form-input" id="cs-premium" type="number" value="${ed?d.premium||'':''}" placeholder="800">
       </div>
       <div class="form-group"><label class="form-label">Stage</label>
-        <select class="form-input" id="cs-status">${['New','Contacted','Quoted','Closed Won','Closed Lost'].map(x=>`<option${ed&&d.status===x?' selected':''}>${x}</option>`).join('')}</select>
+        <select class="form-input" id="cs-status">${(ed?['New','Contacted','Quoted','Closed Won','Closed Lost']:['New','Contacted','Quoted']).map(x=>`<option${ed&&d.status===x?' selected':''}>${x}</option>`).join('')}</select>
       </div>
     </div>
     <div class="form-group"><label class="form-label">Assigned Producer</label>
@@ -5443,6 +5467,16 @@ async function saveCrossSell(id){
     agentId:      document.getElementById('cs-ag').value,
     notes:        document.getElementById('cs-notes').value.trim(),
   };
+
+  // New cross-sell opportunities are created as real leads (leadType 'Cross Sale',
+  // linked to the customer via crossSellRef) so they open, edit, quote, close and
+  // count toward KPIs exactly like every other lead. Only legacy crosssells docs
+  // (already Closed Won/Lost) still take the older path below.
+  if(!id){
+    await createCrossSellLead(data, cust, custId);
+    closeModal();
+    return;
+  }
 
   // Check if previous status was already Closed Won (avoid double-adding policy)
   const prevCS = id ? DB.crosssells.find(c=>c.id===id) : null;
@@ -5548,6 +5582,117 @@ async function deleteCrossSell(id){
   if(!confirm('Remove this cross-sell opportunity?')) return;
   await db.collection('crosssells').doc(id).delete();
   toast('Removed');
+}
+
+// ── CROSS-SELLS AS REAL LEADS ─────────────────────────────────────────
+// A cross-sell is a lead (leadType 'Cross Sale') in the leads collection whose
+// crossSellRef points at the existing customer's file. It uses the normal lead
+// form/quotes/stages/tasks, counts in the Quotes KPI via quotedDate like any
+// lead, and stays out of the Customers list (crossSellRef) and the New Leads
+// KPI. When a quote on it closes won, saveLead() adds the policy to the
+// customer's file (addCrossSellPoliciesToCustomer).
+const isCrossSellLead = l => !!l.crossSellRef && !l.customerType;
+
+async function createCrossSellLead(data, cust, custId){
+  const todayISO = new Date().toISOString().slice(0,10);
+  const lead = {
+    firstName: cust?.firstName||'', lastName: cust?.lastName||'',
+    email: cust?.email||'', phone: cust?.phone||'',
+    leadType: 'Cross Sale', source: 'Cross Sale', crossSellRef: custId,
+    agentId: data.agentId||'', status: data.status,
+    line: data.line, carrier: data.carrier, premium: data.premium,
+    notes: data.notes,
+    quotes: [{line:data.line, carrier:data.carrier, premium:data.premium, notes:'', currentCarrier:'', renewalDate:'', status:''}],
+    soldQuotes: [], lostQuotes: [],
+    date: todayISO, stageDate: todayISO,
+    companyName:'', businessType:'', industry:'', referralPartnerId:'', referralPartnerName:'',
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+  };
+  if(data.status==='Quoted') lead.quotedDate = todayISO;
+  const ref = await db.collection('leads').add(lead);
+  const nm = `${lead.firstName} ${lead.lastName}`.trim();
+  logActivity('🔀','#ede9fe',`Cross-sell opportunity added for <b>${nm}</b> — ${data.line}`);
+  toast('Cross-sell opportunity added!');
+  if(data.status==='Quoted') await createQuotedFollowUpTasks(ref.id, lead);
+}
+
+// A quote on a cross-sell lead just closed won → add it to the customer's file
+// (policy + premium + renewal), same as the old saveCrossSell() close did.
+async function addCrossSellPoliciesToCustomer(custId, custName, wonQuotes, todayISO){
+  try {
+    const snap = await db.collection('leads').doc(custId).get();
+    const latest = snap.exists ? snap.data() : null;
+    const newPolicies = wonQuotes.map(q=>({
+      carrier: q.carrier||'', policyType:'', line:q.line||'Auto', premium:Number(q.premium)||0,
+      effectiveDate: todayISO, renewalDate: calcRenewalDate(todayISO, q.line||'Auto'),
+      policyNumber:'', notes: q.notes||'Added via cross-sell',
+    }));
+    if(latest){
+      await db.collection('leads').doc(custId).update({
+        policies: [...(latest.policies||[]), ...newPolicies],
+        premium:  (Number(latest.premium)||0) + newPolicies.reduce((s,p)=>s+p.premium,0),
+        closedDate: latest.closedDate || todayISO,
+      });
+    }
+    for(const p of newPolicies){
+      if(!p.renewalDate) continue;
+      await db.collection('renewals').add({
+        name: custName, policy: `${p.line} — ${p.carrier}`, renewDate: p.renewalDate,
+        premium: p.premium, status:'Pending', leadId: custId,
+      });
+    }
+    logActivity('⭐','#dcfce7',`Cross-sell closed! <b>${custName}</b> — ${newPolicies.map(p=>p.line).join(', ')} added to customer file`);
+  } catch(e){ console.warn('Could not update customer file for cross-sell:', e); }
+}
+
+// One-time, idempotent move of open legacy cross-sell opportunities (crosssells
+// collection) into real leads, so they can be edited like every other lead card.
+// Deterministic lead id + a transaction means two browsers can't create duplicates
+// or overwrite edits. Tasks pointing at the old doc are re-pointed to the lead.
+let _csMigrating = false;
+async function migrateCrossSellsToLeads(){
+  if(_csMigrating || !DB.leads.length || !(DB.crosssells||[]).length) return;
+  const open = DB.crosssells.filter(c=>!['Closed Won','Closed Lost'].includes(c.status));
+  if(!open.length) return;
+  _csMigrating = true;
+  try {
+    const todayISO = new Date().toISOString().slice(0,10);
+    for(const c of open){
+      const leadId = 'xs_'+c.id;
+      const cust = DB.leads.find(l=>l.id===c.customerId);
+      const parts = (c.customerName||'').trim().split(/\s+/);
+      const created = typeof c.createdAt==='number' ? new Date(c.createdAt).toISOString().slice(0,10) : todayISO;
+      const lead = {
+        firstName: cust ? (cust.firstName||'') : (parts[0]||''),
+        lastName:  cust ? (cust.lastName||'')  : parts.slice(1).join(' '),
+        email: cust?.email||'', phone: cust?.phone||'',
+        leadType:'Cross Sale', source:'Cross Sale', crossSellRef: c.customerId||'',
+        agentId: c.agentId||'', status: c.status,
+        line: c.line||'Auto', carrier: c.carrier||'', premium: Number(c.premium)||0, notes: c.notes||'',
+        quotes:[{line:c.line||'Auto', carrier:c.carrier||'', premium:Number(c.premium)||0, notes:'', currentCarrier:'', renewalDate:'', status:''}],
+        soldQuotes:[], lostQuotes:[],
+        date: created, stageDate: (c.status==='Quoted' && c.quotedDate) || created,
+        companyName:'', businessType:'', industry:'', referralPartnerId:'', referralPartnerName:'',
+        createdAt: typeof c.createdAt==='number' ? firebase.firestore.Timestamp.fromMillis(c.createdAt) : firebase.firestore.FieldValue.serverTimestamp(),
+      };
+      if(c.quotedDate) lead.quotedDate = c.quotedDate;
+      // Re-point any tasks first (idempotent), then move the record itself.
+      const taskSnap = await db.collection('tasks').where('crossSellId','==',c.id).get();
+      if(!taskSnap.empty){
+        const b = db.batch();
+        taskSnap.docs.forEach(t=>b.update(t.ref,{leadId, crossSellId: firebase.firestore.FieldValue.delete()}));
+        await b.commit();
+      }
+      const leadRef = db.collection('leads').doc(leadId), csRef = db.collection('crosssells').doc(c.id);
+      await db.runTransaction(async tx=>{
+        const [ls, cs] = await Promise.all([tx.get(leadRef), tx.get(csRef)]);
+        if(!cs.exists) return;
+        if(!ls.exists) tx.set(leadRef, lead);
+        tx.delete(csRef);
+      });
+    }
+  } catch(e){ console.warn('Cross-sell migration failed (will retry on next load):', e); }
+  finally { _csMigrating = false; }
 }
 
 // ── FOLIO GOALS FORM ──
