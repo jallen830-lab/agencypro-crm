@@ -6852,6 +6852,24 @@ If you reply with a copy of your current declarations page, I'll compare it and 
 Allen Insurance Agency
 [Number]`
   }},
+  call3: { label:'Day 14–17 — Third Call (2nd mailer landed)', type:'📞 Call Script', color:'#ef4444', seg:{
+'*':`OPENING
+"Hi [Name], it's [Agent] with Allen Insurance Agency. I've sent you a couple of notes about the home at [Address] — the second one should have reached you in the last few days."
+
+BRIDGE
+"I know it's easy for mail to get buried. Your renewal is coming up around [Month], and a quick side-by-side is the easiest way to know whether you're getting the best coverage and price."
+
+ASK
+"Can I grab a few details and run a quote while we're on the phone? It takes about 10 minutes. Or, if you'd rather, text me a photo of your current declarations page and I'll send the comparison back within a day."
+
+IF THEY OBJECT
+• "I'm happy where I am" → "That's great — a comparison costs nothing, and you'll know for sure you're in the right spot."
+• "Not now" → "No problem. What month does it renew? I'll check back before then."
+• "Send me something" → "Happy to. What's the best email, and who are you with today?"
+
+IF VOICEMAIL
+"Hi [Name], [Agent] at Allen Insurance Agency following up on the note I sent about your home. If you'd like a free coverage and price comparison, call or text me at [Number]. Thanks!"`
+  }},
   final: { label:'Day 21 — Final Call', type:'📞 Call Script', color:'#f59e0b', seg:{
 '*':`OPENING
 "Hi [Name], it's [Agent] with Allen Insurance Agency. I've reached out a few times about your home at [Address] and I don't want to keep bothering you — this will be my last call for now."
@@ -6876,7 +6894,7 @@ const ANNIV_MAILER2_ANGLE = {
   'Umbrella':'"Is your home worth more than your liability limits?" — one lawsuit angle, pool/teen-driver exposure',
   'Landlord':'"Is your rental really covered?" — loss of rents, liability, regular-homeowners-policy gap'
 };
-function annivScriptSeqKey(seq){ return {a_call1:'call1',a_call2:'call2',a_email:'email',a_final:'final'}[seq]||''; }
+function annivScriptSeqKey(seq){ return {a_call1:'call1',a_call2:'call2',a_call3:'call3',a_email:'email',a_final:'final'}[seq]||''; }
 function showAnnivScript(taskId){
   const t=(DB.tasks||[]).find(x=>x.id===taskId); if(!t) return;
   const key=annivScriptSeqKey(t.seqKey); const s=ANNIV_SCRIPTS[key]; if(!s) return;
@@ -6914,7 +6932,7 @@ function annivShowModal(html,width){
 
 // ── CADENCE TASKS ─────────────────────────────────────────────────────
 // Day 0 mailer · Day 3–5 first call · Day 7–10 second call + email ·
-// Day 14 second mailer · Day 21 final call. Mailers are ONE task per wave
+// Day 14 second mailer · Day 14–17 third call · Day 21 final call. Mailers are ONE task per wave
 // (not one per lead); calls/emails are per lead, spread across the window's
 // weekdays so a 125-lead wave never lands on one producer in one day.
 function annivBuildCadenceTasks(id,rec,opts){
@@ -6927,11 +6945,12 @@ function annivBuildCadenceTasks(id,rec,opts){
     add('a_mail1',0,M,'high','mailer',`📬 Day 0 — Mail anniversary mailer to ${nm} (${seg})`);
     add('a_mail2',14,annivAddDays(M,14),'medium','mailer',`📬 Day 14 — Send 2nd mailer (new angle) to ${nm} if still no conversation. Angle: ${ANNIV_MAILER2_ANGLE[seg]||''}`);
   }
-  const pool1=annivWeekdays(M,3,5), pool2=annivWeekdays(M,7,10);
-  const due1=pool1[i%pool1.length], due2=pool2[i%pool2.length];
+  const pool1=annivWeekdays(M,3,5), pool2=annivWeekdays(M,7,10), pool3=annivWeekdays(M,14,17);
+  const due1=pool1[i%pool1.length], due2=pool2[i%pool2.length], due3=pool3[i%pool3.length];
   if(rec.phone){
     add('a_call1',3,due1,'high','call',`📞 Day 3–5 — First call: ${nm} (${seg}). Reference the mailer; ask when their home policy renews.`);
     add('a_call2',7,due2,'high','call',`📞 Day 7–10 — Second call: ${nm} (${seg}).${rec.email?' Send the follow-up email too.':''}`);
+    add('a_call3',14,due3,'medium','call',`📞 Day 14–17 — Third call: ${nm} (${seg}). The 2nd mailer just landed — reference it and try to get a quote started.`);
     add('a_final',21,annivBizDay(annivAddDays(M,21)),'medium','call',`📞 Day 21 — Final call: ${nm} (${seg}). Last attempt; capture their renewal month, then mark Not Now if not quoted.`);
   }
   if(rec.email) add('a_email',7,due2,'medium','email',`📧 Day 7–10 — Email ${nm} (${seg}): follow up on the mailer and calls.`);
@@ -7709,6 +7728,16 @@ async function annivSync(){
         await db.collection('anniversaryLeads').doc(l.id).update(upd);
       }
       const fin=ts.find(t=>t.seqKey==='a_final');
+      // Backfill the Day 14–17 call for leads imported before it existed
+      // (only while that window is still open; deterministic id + get() guard = never duplicates)
+      if(l.phone&&l.mailDate&&annivAddDays(l.mailDate,17)>=today&&!(fin&&fin.done)&&!ts.some(t=>t.seqKey==='a_call3')){
+        const t3=annivBuildCadenceTasks(l.id,l,{}).find(t=>t.data.seqKey==='a_call3');
+        if(t3){
+          if(t3.data.due<today) t3.data.due=annivBizDay(today);
+          const ref3=db.collection('tasks').doc(t3.id);
+          if(!(await ref3.get()).exists) await ref3.set(t3.data);
+        }
+      }
       const over=fin?(fin.done&&!fin.cancelledReason):(l.cadenceEnd&&l.cadenceEnd<today);
       if(over) await annivNotNow(l.id,'Cadence ended — not quoted',true);
     }
