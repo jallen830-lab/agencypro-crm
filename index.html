@@ -3797,6 +3797,29 @@ function taskRowHtml(t){
   </div>`;
 }
 
+// One step at a time per lead: a follow-up sequence (Quoted / Permits / Anniversary)
+// has Day 0, Day 3, Day 7... steps. When several of a lead's steps are showing in
+// Overdue / Due Today at once (e.g. a snoozed Day 0 landing on the same day as Day 3),
+// only the earliest-day step(s) show; later days wait until the earlier step is
+// completed. Steps of the same day (Day 3 call + Day 3 email) still show together.
+// Nothing is deleted or changed — the hidden steps appear once the earlier one is done.
+const SEQUENCE_TASK_TYPES = ['quoted-followup','permits-followup','anniversary-followup'];
+function seqLeadKey(t){ return t.leadId || t.anniversaryId || t.crossSellId || ''; }
+function oneStepPerLead(surfaced){
+  const minDay = new Map();
+  surfaced.forEach(t=>{
+    if(!SEQUENCE_TASK_TYPES.includes(t.type) || typeof t.sequenceDay!=='number') return;
+    const lk = seqLeadKey(t); if(!lk) return;
+    const k = t.type+'|'+lk+'|'+(t.cycle||1);
+    if(!minDay.has(k) || t.sequenceDay < minDay.get(k)) minDay.set(k, t.sequenceDay);
+  });
+  return surfaced.filter(t=>{
+    if(!SEQUENCE_TASK_TYPES.includes(t.type) || typeof t.sequenceDay!=='number') return true;
+    const lk = seqLeadKey(t); if(!lk) return true;
+    return t.sequenceDay <= minDay.get(t.type+'|'+lk+'|'+(t.cycle||1));
+  });
+}
+
 function renderTasks(){
   try {
     const overdueEl = document.getElementById('overdue-task-list');
@@ -3804,7 +3827,7 @@ function renderTasks(){
     if(!overdueEl || !todayEl) return;
     const todayStr = new Date().toISOString().slice(0,10);
 
-    const open = (DB.tasks||[]).filter(t=>!t.done);
+    const open = oneStepPerLead((DB.tasks||[]).filter(t=>!t.done && (!t.due || t.due<=todayStr)));
     const rank = t => TASK_PRIORITY_RANK[t.priority] ?? 3;
     const overdue = open.filter(t=>t.due && t.due < todayStr)
       .sort((a,b)=> rank(a)-rank(b) || (a.due||'').localeCompare(b.due||''));
