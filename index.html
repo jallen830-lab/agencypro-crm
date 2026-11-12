@@ -1528,12 +1528,8 @@ function applySettings(){
   const av=document.getElementById('owner-avatar'); if(av)av.textContent=n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 }
 function updateTaskBadge(){
-  const today = new Date(); today.setHours(0,0,0,0);
-  const due = DB.tasks.filter(t=>{
-    if(t.done||!t.due) return false;
-    const d = new Date(t.due+'T00:00:00');
-    return d <= today;
-  }).length;
+  // Same set the Tasks page shows (Overdue + Due Today, one step per lead)
+  const due = surfacedTasks().length;
   const el=document.getElementById('task-badge');
   if(el){ el.textContent=due; el.style.display=due?'inline':'none'; }
 }
@@ -3820,6 +3816,13 @@ function oneStepPerLead(surfaced){
   });
 }
 
+// Open tasks that are overdue or due today (or undated), one step per lead —
+// the single source for the Tasks page lists AND the sidebar badge.
+function surfacedTasks(){
+  const todayStr = new Date().toISOString().slice(0,10);
+  return oneStepPerLead((DB.tasks||[]).filter(t=>!t.done && (!t.due || t.due<=todayStr)));
+}
+
 function renderTasks(){
   try {
     const overdueEl = document.getElementById('overdue-task-list');
@@ -3827,7 +3830,7 @@ function renderTasks(){
     if(!overdueEl || !todayEl) return;
     const todayStr = new Date().toISOString().slice(0,10);
 
-    const open = oneStepPerLead((DB.tasks||[]).filter(t=>!t.done && (!t.due || t.due<=todayStr)));
+    const open = surfacedTasks();
     const rank = t => TASK_PRIORITY_RANK[t.priority] ?? 3;
     const overdue = open.filter(t=>t.due && t.due < todayStr)
       .sort((a,b)=> rank(a)-rank(b) || (a.due||'').localeCompare(b.due||''));
